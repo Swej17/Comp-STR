@@ -1,7 +1,7 @@
 import { baselineKey, minConfidence, peakKey } from "./baselines.ts";
 import { ALGORITHM_VERSION, DEFAULT_CONFIG, type Config } from "./config.ts";
 import { monthOf } from "./dates.ts";
-import type { Baseline, BaselineIndex, DealResult, HostOffer, PriceBasis, Tier } from "./types.ts";
+import { PLATFORM_NAMES, type Baseline, type BaselineIndex, type DealResult, type HostOffer, type PriceBasis, type Tier } from "./types.ts";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
   "August", "September", "October", "November", "December"];
@@ -21,16 +21,17 @@ export function scoreStay(
   const nightlyCents = nights.reduce((s, d) => s + offer.nightlyRatesCents[d]!, 0);
   const feesCents = offer.mandatoryFeesCents;
   const offerTotalCents = nightlyCents + feesCents;
-  const air = offer.airbnbPrice;
-  const airbnbTotalCents = air && nights.every((d) => Number.isSafeInteger(air.nightlyRatesCents[d]))
-    ? nights.reduce((s, d) => s + air.nightlyRatesCents[d]!, 0) + air.mandatoryFeesCents
+  const ref = offer.platformPrice;
+  const platformTotalCents = ref && nights.every((d) => Number.isSafeInteger(ref.nightlyRatesCents[d]))
+    ? nights.reduce((s, d) => s + ref.nightlyRatesCents[d]!, 0) + ref.mandatoryFeesCents
     : null;
-  const savings = airbnbTotalCents !== null && airbnbTotalCents > offerTotalCents
-    ? [`${dollars(airbnbTotalCents - offerTotalCents)} less than this home's Airbnb price`]
+  const savings = ref && platformTotalCents !== null && platformTotalCents > offerTotalCents
+    ? [`${dollars(platformTotalCents - offerTotalCents)} less than this home's ${PLATFORM_NAMES[ref.platform]} price`]
     : [];
   const base = {
     listingId: offer.listingId, bookingUrl: offer.bookingUrl, currency: offer.currency,
-    nights: nights.length, offerTotalCents, feesCents, airbnbTotalCents,
+    nights: nights.length, offerTotalCents, feesCents,
+    platform: ref?.platform ?? null, platformTotalCents,
     algorithmVersion: ALGORITHM_VERSION, configVersion: cfg.version,
   };
 

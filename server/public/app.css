@@ -40,6 +40,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* so display rules on buttons/sections never un-hide them */
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .wrap { max-width: 1160px; margin: 0 auto; padding: 0 16px; }
 h1, h2 { line-height: 1.2; text-wrap: balance; }
@@ -66,7 +67,7 @@ a { color: var(--accent); }
   border-radius: 14px;
   box-shadow: var(--shadow);
 }
-.search .area { grid-column: span 2; }
+.search .area { grid-column: span 1; }
 @media (max-width: 480px) { .search .area { grid-column: 1 / -1; } }
 label { display: grid; gap: 4px; font-size: 0.88rem; font-weight: 600; }
 .opt { font-weight: 400; color: var(--muted); }
@@ -142,3 +143,34 @@ button:disabled { opacity: 0.6; cursor: progress; }
 }
 .book:hover { filter: brightness(1.08); }
 .foot { padding: 40px 16px 48px; color: var(--muted); font-size: 0.9rem; }
+
+/* ---------- list + map ---------- */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr); gap: 24px; align-items: start; margin-top: 8px; }
+.split .grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.map-col { position: sticky; top: 16px; }
+.map { height: calc(100vh - 96px); min-height: 420px; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.map-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-top: 8px; }
+.small-check { font-size: 0.9rem; min-height: 36px; }
+@media (max-width: 900px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .map-col { position: static; order: -1; }
+  .map { height: 320px; min-height: 0; }
+}
+.card.active { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* price pins: Leaflet positions .pin at the home's spot; the label sits centered above it */
+.leaflet-div-icon.pin { background: none; border: 0; width: 0; height: 0; }
+.pin-label {
+  position: absolute; transform: translate(-50%, -120%); white-space: nowrap;
+  padding: 3px 9px; border-radius: 999px; background: var(--surface); color: var(--text);
+  font: 700 0.85rem/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  border: 1px solid var(--line); box-shadow: 0 2px 6px rgb(0 0 0 / 0.25); cursor: pointer;
+}
+.pin.active .pin-label, .pin:hover .pin-label, .pin:focus .pin-label { background: var(--accent); color: var(--accent-text); border-color: var(--accent); z-index: 1000; }
+.pin.active { z-index: 1000 !important; }
+.leaflet-container { font: inherit; background: var(--bg); }
+.leaflet-control-attribution { font-size: 0.7rem; }
+
+.mini-map { height: 260px; border-radius: 12px; border: 1px solid var(--line); }
+.approx-area { fill: var(--accent); fill-opacity: 0.18; stroke: var(--accent); stroke-width: 2; }
+.badges.inline { position: static; }

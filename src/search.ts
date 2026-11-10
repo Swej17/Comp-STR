@@ -9,6 +9,7 @@ export type SearchInput = {
   baselines: BaselineIndex;
   query: SearchQuery;
   marketName?: string; // display name for reasons, e.g. "Lake Harmony"; defaults to the market id
+  marketNames?: Record<string, string>; // per-market display names, for searches spanning markets
 };
 
 // g: 0 = ranked by deal, 1 = unscored tail (best_deal only); p: dealPct; c: confidence rank; t: offer total.
@@ -65,7 +66,8 @@ export function search(input: SearchInput, cfg: Config = DEFAULT_CONFIG): Search
   for (const o of latest.values()) {
     const e = checkEligibility(o, q, cfg);
     if (!e.ok) { excluded.push({ listingId: o.listingId, reason: e.reason }); continue; }
-    const r = scoreStay(o, e.nights, input.baselines, input.marketName ?? q.market, cfg);
+    const market = o.propertyClass.market; // each home is compared with its own market's baselines
+    const r = scoreStay(o, e.nights, input.baselines, input.marketNames?.[market] ?? input.marketName ?? market, cfg);
     ranked.push({ r, k: sortKey(r, sort) });
   }
   ranked.sort((a, b) => compare(a.k, b.k, sort));

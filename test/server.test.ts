@@ -12,6 +12,14 @@ import { openDb, status } from "../server/db.ts";
 import { scanInbox } from "../server/inbox.ts";
 import { dollarsToCents, ImportError, OFFER_COLUMNS, parseImport } from "../server/importer.ts";
 import { sampleCsvs } from "../server/sample-data.ts";
+import { DEFAULT_CONFIG, fromPlatformPrice, type HostOffer } from "../src/index.ts";
+
+/** Great-circle distance in meters (haversine). */
+function meters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
 
 test("csv: quotes, escaped quotes, commas and newlines in fields, CRLF, BOM", () => {
   assert.deepEqual(parseCsv('﻿a,b\r\n"x, y","say ""hi"""\r\n"two\nlines",z'), [
@@ -151,7 +159,10 @@ test("inbox: good files imported, bad file rejected with a readable reason", () 
 test("api: markets list with display names", async () => {
   const { code, body } = await get("/api/markets");
   assert.equal(code, 200);
-  assert.deepEqual(body.markets, [{ id: "fake-pine-lake", name: "Pine Lake" }, { id: "fake-ridge-valley", name: "Ridge Valley" }]);
+  assert.deepEqual(body.markets.map((m: any) => [m.id, m.name]), [["fake-pine-lake", "Pine Lake"], ["fake-ridge-valley", "Ridge Valley"]]);
+  for (const m of body.markets) assert.ok(m.bounds.west < m.bounds.east && m.bounds.south < m.bounds.north);
+  assert.equal(body.hostFeePct.marketScope, 8);
+  assert.match(body.tiles.url, /^https:\/\/tile\.openstreetmap\.org\//);
 });
 
 test("api: traveler search ranks deals and never leaks internal reasons", async () => {
@@ -159,7 +170,7 @@ test("api: traveler search ranks deals and never leaks internal reasons", async 
   assert.equal(code, 200);
   assert.equal(body.excluded, undefined);
   assert.equal(body.results[0].title, "Hemlock Hollow Cabin"); // listing details ride along with each result
-  assert.equal(body.marketName, "Pine Lake");
+  assert.equal(body.results[0].marketName, "Pine Lake");
   const ids = body.results.map((r: any) => r.listingId);
   assert.equal(ids[0], "PL-101"); // priced 30% under typical
   assert.equal(body.results[0].tier, "great");
@@ -214,30 +225,55 @@ test("traveler page is served with a strict content policy", async () => {
   assert.equal((await fetch(`${base}/../package.json`)).status, 404);
 });
 
-test("offers priced on Airbnb are listed 7% lower; Airbnb links are refused", () => {
-  const header = [...OFFER_COLUMNS, "prices_from", "title", "town", "description", "bathrooms"];
-  const parsed = parseImport(toCsv([header, [...offerRow(), "airbnb", "Test Cabin", "Pine Lake", "Cozy.", "1.5"]]), "2026-11-09T12:00:00Z");
-  if (parsed.kind !== "offers") throw new Error("expected offers");
-  const o = parsed.offers[0]!;
-  assert.equal(o.nightlyRatesCents["2027-03-10"], 13_950); // $150 − 7%
-  assert.equal(o.mandatoryFeesCents, 11_160); // $120 − 7%
-  assert.deepEqual(o.details, { title: "Test Cabin", town: "Pine Lake", description: "Cozy.", bathrooms: 1.5 });
-  assert.match(problemsOf(() => parseImport(toCsv([header, [...offerRow(), "", "T", "", "", "2.3"]]), "x"))[0]!, /bathrooms/);
-  assert.equal(o.airbnbPrice!.nightlyRatesCents["2027-03-10"], 15_000);
-  assert.equal(o.airbnbPrice!.mandatoryFeesCents, 12_000);
-
-  const onAirbnb = (pricesFrom: string) =>
-    problemsOf(() => parseImport(toCsv([header, [...offerRow({ booking_url: "https://www.airbnb.com/rooms/123" }), pricesFrom, "", "", "", ""]]), "x"));
-  assert.match(onAirbnb("airbnb")[0]!, /direct booking page/);
-  assert.deepEqual(onAirbnb("direct"), []); // prices used as given may link anywhere
-  assert.deepEqual(onAirbnb(""), []);
-  assert.match(onAirbnb("vrbo")[0]!, /prices_from must be airbnb, direct, or blank/);
+test("pricing: host keeps the same take-home at our 8% fee, and we're always under the platform price", () => {
+  // $150 a night on each platform → our price (host nets the same: price × (100 − their fee) ÷ 92)
+  assert.equal(fromPlatformPrice(15_000, "airbnb"), 13_777); // × 84.5/92 → 8.2% less
+  assert.equal(fromPlatformPrice(15_000, "booking_com"), 13_859); // × 85/92 → 7.6% less
+  assert.equal(fromPlatformPrice(15_000, "vrbo"), 14_348); // × 88/92 → 4.3% less
+  for (const p of ["airbnb", "vrbo", "booking_com"] as const) {
+    const ours = fromPlatformPrice(15_000, p);
+    const hostKeepsThere = 15_000 * (100 - DEFAULT_CONFIG.hostFeePct[p]) / 100;
+    assert.ok(Math.abs(ours * 0.92 - hostKeepsThere) < 1, `${p}: host take-home unchanged`);
+  }
+  // If our fee were ever higher than a platform's, the guard still keeps us 1% under that platform.
+  const pricey = { ...DEFAULT_CONFIG, hostFeePct: { ...DEFAULT_CONFIG.hostFeePct, marketScope: 14 } };
+  assert.equal(fromPlatformPrice(15_000, "vrbo", pricey), 14_850);
+  assert.equal(fromPlatformPrice(0, "airbnb"), 0);
 });
 
-test("api: dated results show the traveler's saving against Airbnb", async () => {
+test("offers priced on another platform are converted; links to that platform are refused", () => {
+  const header = [...OFFER_COLUMNS, "prices_from", "title", "town", "description", "bathrooms", "latitude", "longitude"];
+  const row = (pricesFrom: string, over: Record<string, string> = {}, extra = ["Test Cabin", "Pine Lake", "Cozy.", "1.5", "41.06", "-75.62"]) =>
+    [...offerRow(over), pricesFrom, ...extra];
+  const parsed = parseImport(toCsv([header, row("airbnb")]), "2026-11-09T12:00:00Z");
+  if (parsed.kind !== "offers") throw new Error("expected offers");
+  const o = parsed.offers[0]!;
+  assert.equal(o.nightlyRatesCents["2027-03-10"], 13_777); // $150 on Airbnb
+  assert.equal(o.mandatoryFeesCents, 11_022); // $120 × 84.5/92
+  assert.deepEqual(o.platformPrice?.platform, "airbnb");
+  assert.equal(o.platformPrice!.nightlyRatesCents["2027-03-10"], 15_000);
+  assert.equal(o.platformPrice!.mandatoryFeesCents, 12_000);
+  assert.deepEqual(o.details, { title: "Test Cabin", town: "Pine Lake", description: "Cozy.", bathrooms: 1.5 });
+  assert.deepEqual(o.location, { lat: 41.06, lng: -75.62 });
+
+  const problems = (pricesFrom: string, url: string, extra?: string[]) =>
+    problemsOf(() => parseImport(toCsv([header, row(pricesFrom, { booking_url: url }, extra)]), "x"));
+  assert.match(problems("airbnb", "https://www.airbnb.com/rooms/123")[0]!, /direct booking page.*Airbnb price/);
+  assert.match(problems("vrbo", "https://www.vrbo.com/123")[0]!, /Vrbo price/);
+  assert.match(problems("booking_com", "https://www.booking.com/hotel/x.html")[0]!, /Booking\.com price/);
+  assert.deepEqual(problems("vrbo", "https://www.airbnb.com/rooms/123"), []); // a different platform's page is the host's call
+  assert.deepEqual(problems("direct", "https://www.airbnb.com/rooms/123"), []); // prices used as given may link anywhere
+  assert.match(problems("expedia", "https://example.com/x")[0]!, /prices_from must be airbnb, vrbo, booking_com, direct, or blank/);
+  assert.match(problems("", "https://example.com/x", ["T", "", "", "2.3", "", ""])[0]!, /bathrooms/);
+  assert.match(problems("", "https://example.com/x", ["T", "", "", "", "41.06", ""])[0]!, /longitude/);
+  assert.match(problems("", "https://example.com/x", ["T", "", "", "", "95", "-75"])[0]!, /latitude/);
+});
+
+test("api: dated results show the traveler's saving against the host's platform price", async () => {
   const { body } = await get(`/api/search?market=fake-pine-lake&${dates}&guests=2`);
   const top = body.results[0];
-  const saved = top.airbnbTotalCents - top.offerTotalCents;
+  assert.equal(top.platform, "airbnb");
+  const saved = top.platformTotalCents - top.offerTotalCents;
   assert.ok(saved > 0);
   assert.ok(top.reasons.includes(`$${(saved / 100).toFixed(2)} less than this home's Airbnb price`), top.reasons.join(" | "));
 });
@@ -251,9 +287,11 @@ test("api: browse every home in an area without dates, cheapest first", async ()
   assert.deepEqual(prices, [...prices].sort((a: number, b: number) => a - b));
   for (const l of body.listings) {
     assert.ok(l.title && l.town && l.description.startsWith("Fictional sample home."));
-    // 7% less than the same night on Airbnb, rounded to the cent
-    assert.equal(l.fromNightlyCents, Math.round(l.fromAirbnbNightlyCents * 93 / 100));
+    // always under the host's own price on that platform
+    assert.equal(l.fromNightlyCents, fromPlatformPrice(l.fromPlatformNightlyCents, l.platform));
+    assert.ok(l.fromNightlyCents < l.fromPlatformNightlyCents);
   }
+  assert.deepEqual(new Set(body.listings.map((l: any) => l.platform)), new Set(["airbnb", "vrbo", "booking_com"]));
   const filtered = await get("/api/listings?market=fake-pine-lake&guests=9&bedroomsMin=4&pets=true");
   assert.ok(filtered.body.listings.every((l: any) => l.maxGuests >= 9 && l.bedrooms >= 4 && l.petsAllowed === true));
   assert.equal((await get("/api/listings")).code, 400);
@@ -271,7 +309,58 @@ test("api: a home's page has details and 12 months of prices", async () => {
   assert.deepEqual(body.amenities, ["fireplace", "hot_tub", "wifi"]);
   assert.equal(body.months.length, 12);
   assert.equal(body.months[0].month, "Nov 2026");
-  for (const m of body.months) assert.ok(m.nightlyCents < m.airbnbNightlyCents);
+  for (const m of body.months) assert.ok(m.nightlyCents < m.platformNightlyCents);
   assert.equal((await get("/api/listings/RV-329")).code, 404); // not opted in
   assert.equal((await get("/api/listings/nope")).code, 404);
+});
+
+// The sample homes' exact spots, straight from the sample file (never from the API).
+const exactSpots = () => {
+  const parsed = parseImport(sampleCsvs(TODAY).offers, "x");
+  if (parsed.kind !== "offers") throw new Error("expected offers");
+  return new Map(parsed.offers.map((o: HostOffer) => [o.listingId, o.location!]));
+};
+
+test("map: travelers only ever see an approximate spot, 150–450 m from the real one", async () => {
+  const exact = exactSpots();
+  const { body } = await get("/api/listings?market=fake-pine-lake");
+  for (const l of body.listings) {
+    const d = meters(l.location, exact.get(l.listingId)!);
+    assert.ok(d >= 130 && d <= 470, `${l.listingId} moved ${Math.round(d)} m`);
+  }
+  // The same pin every time, so it can't be averaged back to the real spot.
+  const again = await get("/api/listings?market=fake-pine-lake");
+  assert.deepEqual(again.body.listings.map((l: any) => l.location), body.listings.map((l: any) => l.location));
+  // Exact coordinates appear nowhere in any response.
+  const raw = await (await fetch(`${base}/api/listings/PL-101`)).text();
+  const real = exact.get("PL-101")!;
+  assert.ok(!raw.includes(String(real.lat)) && !raw.includes(String(real.lng)));
+});
+
+test("map: a box returns only homes whose pins are inside it, across markets", async () => {
+  const all = await get("/api/listings?bbox=-76,40.5,-75,41.5"); // covers both fake areas
+  assert.equal(all.body.total, 25 + 14);
+  const pine = await get("/api/listings?market=fake-pine-lake");
+  const pick = pine.body.listings[0].location;
+  const box = [pick.lng - 0.002, pick.lat - 0.002, pick.lng + 0.002, pick.lat + 0.002].join(",");
+  const small = await get(`/api/listings?bbox=${box}`);
+  assert.ok(small.body.total >= 1);
+  for (const l of small.body.listings) {
+    assert.ok(Math.abs(l.location.lat - pick.lat) <= 0.002 && Math.abs(l.location.lng - pick.lng) <= 0.002);
+  }
+  const empty = await get("/api/listings?bbox=-80,30,-79.9,30.1");
+  assert.equal(empty.body.total, 0);
+
+  // Dated search across both areas: each home is still compared with its own area's typical prices.
+  const dated = await get(`/api/search?bbox=-76,40.5,-75,41.5&${dates}&guests=2&pageSize=50`);
+  assert.equal(dated.code, 200);
+  const markets = new Set(dated.body.results.map((r: any) => r.market));
+  assert.deepEqual(markets, new Set(["fake-pine-lake", "fake-ridge-valley"]));
+  for (const r of dated.body.results.filter((x: any) => x.tier === "great" || x.tier === "good")) {
+    assert.ok(r.reasons[0].endsWith(`in ${r.marketName}`), r.reasons[0]);
+  }
+
+  for (const bad of ["1,2,3", "-75,41,-76,42", "-75,41,-74,95", "a,b,c,d"]) {
+    assert.equal((await get(`/api/listings?bbox=${bad}`)).code, 400, bad);
+  }
 });

@@ -1,6 +1,6 @@
-import type { PriceBasis } from "./types.ts";
+import type { Platform, PriceBasis } from "./types.ts";
 
-export const ALGORITHM_VERSION = "1.0.0";
+export const ALGORITHM_VERSION = "1.1.0";
 
 export type Config = {
   readonly version: string;
@@ -25,14 +25,18 @@ export type Config = {
   readonly maxStayNights: number;
   readonly pageSize: { readonly default: number; readonly max: number };
   /**
-   * Whole percent off a host's Airbnb price. Our lower host fee pays for it: with Airbnb at 15% and
-   * Market Scope at 8%, a 7% lower price still leaves the host slightly more (0.93 × 0.92 = 85.6% vs 85%).
+   * Host fees in percent, charged on nightly rate + cleaning/mandatory fees (not taxes) on every platform.
+   * Reference figures: Triad Vacation Rentals fee breakdown, updated 2026-10-16. Airbnb host-only
+   * fee; Vrbo's single commission for bookings from 2026-10-29 (includes payment processing);
+   * Booking.com's typical US commission (contracts range 10–25%, plus 1.1–3.1% if using its payments).
    */
-  readonly airbnbDiscountPct: number;
+  readonly hostFeePct: { readonly marketScope: number } & { readonly [P in Platform]: number };
+  /** Our price is always at least this many percent under the platform price, whatever the fees. */
+  readonly minUnderMarketPct: number;
 };
 
 export const DEFAULT_CONFIG: Config = Object.freeze({
-  version: "2026-11-10.2",
+  version: "2026-11-10.3",
   minSampleSize: 20,
   sampleConfidence: { high: 50, medium: 30 },
   maxBaselineAgeDays: 400,
@@ -44,9 +48,17 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   maxOfferAgeDays: 14,
   maxStayNights: 90,
   pageSize: { default: 20, max: 50 },
-  airbnbDiscountPct: 7,
+  hostFeePct: { marketScope: 8, airbnb: 15.5, vrbo: 12, booking_com: 15 },
+  minUnderMarketPct: 1,
 });
 
-/** Market Scope's price for a host's Airbnb price: the configured discount, half-up to whole cents. */
-export const fromAirbnbPrice = (cents: number, cfg: Config = DEFAULT_CONFIG): number =>
-  Math.round((cents * (100 - cfg.airbnbDiscountPct)) / 100);
+/**
+ * Market Scope's price for a price the host charges on `platform`: the price that leaves the host
+ * the same take-home at our fee, capped so it is always at least `minUnderMarketPct` under the
+ * platform price. Half-up to whole cents. E.g. $150 on Airbnb → $150 × 84.5 ÷ 92 = $137.77.
+ */
+export function fromPlatformPrice(cents: number, platform: Platform, cfg: Config = DEFAULT_CONFIG): number {
+  const hostNeutral = (cents * (100 - cfg.hostFeePct[platform])) / (100 - cfg.hostFeePct.marketScope);
+  const ceiling = (cents * (100 - cfg.minUnderMarketPct)) / 100;
+  return Math.round(Math.min(hostNeutral, ceiling));
+}

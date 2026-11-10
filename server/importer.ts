@@ -1,8 +1,8 @@
 // Turns a dropped CSV file into validated observations or host offers. All-or-nothing:
 // any bad row rejects the whole file with a readable list of problems.
-import { fromAirbnbPrice } from "../src/config.ts";
+import { fromPlatformPrice } from "../src/config.ts";
 import { isDate, stayNights } from "../src/dates.ts";
-import type { BaselineObservation, Confidence, HostOffer, PriceBasis } from "../src/types.ts";
+import { PLATFORM_NAMES, type BaselineObservation, type Confidence, type HostOffer, type Platform, type PriceBasis } from "../src/types.ts";
 import { parseCsv } from "./csv.ts";
 
 export class ImportError extends Error {
@@ -25,12 +25,25 @@ export const OFFER_COLUMNS = [
 ];
 // Optional in both: market_name, property_type. Optional for offers: updated_at (blank = time of import).
 const RATE_COLUMNS = ["rate_from", "rate_to", "nightly_rate_usd"];
-const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at", "prices_from", "title", "town", "description", "bathrooms"];
+const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at", "prices_from", "title", "town", "description", "bathrooms", "latitude", "longitude"];
+// latitude, longitude (optional, both or neither): the home's exact spot, e.g. 41.0601, -75.6123.
+// Kept private; travelers see an approximate spot (see server/geo.ts).
+const coord = (min: number, max: number): P<number> => (s) => {
+  const n = /^-?\d{1,3}(\.\d+)?$/.test(s) ? Number(s) : NaN;
+  return n >= min && n <= max ? n : undefined;
+};
 // title, town, description, bathrooms (optional): what travelers see. Without a title the site shows "3-bedroom home".
 const halves: P<number> = (s) => (/^\d+(\.5)?$/.test(s) ? Number(s) : undefined);
-// prices_from (optional): "airbnb" = the rates and fees are the host's Airbnb prices; we list the
-// lower price that nets the host the same at our fee. Blank or "direct" = use the prices as given.
-const isAirbnbLink = (url: string) => /(^|\.)airbnb\.[a-z.]+$/i.test(new URL(url).hostname);
+// prices_from (optional): airbnb / vrbo / booking_com = the rates and fees are the host's prices on
+// that platform; we list the lower price that nets the host the same at our fee (fromPlatformPrice).
+// Blank or "direct" = use the prices as given.
+const PLATFORM_HOSTS: Record<Platform, RegExp> = {
+  airbnb: /(^|\.)airbnb\.[a-z.]+$/i,
+  vrbo: /(^|\.)(vrbo|homeaway)\.[a-z.]+$/i,
+  booking_com: /(^|\.)booking\.com$/i,
+};
+const pricesFrom: P<Platform | null> = (s) =>
+  s === "" || s === "direct" ? null : Object.hasOwn(PLATFORM_HOSTS, s) ? (s as Platform) : undefined;
 
 /** "$1,299.50" → 129950. Parsed as text, so a float never touches money. */
 export function dollarsToCents(s: string): number | undefined {
@@ -114,7 +127,7 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
   }
 
   // Offers: one row per rate period; a listing may span several rows with identical listing details.
-  const listings = new Map<string, { offer: HostOffer; signature: string; fromAirbnb: boolean }>();
+  const listings = new Map<string, { offer: HostOffer; signature: string; platform: Platform | null }>();
   for (const rec of records) {
     const id = need(rec, "listing_id", text, "is required");
     if (id === undefined) continue;
@@ -150,6 +163,12 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
         updatedAt: rec.get("updated_at") === "" ? importedAt : need(rec, "updated_at", instant, "must be a date"),
         expiresAt: need(rec, "expires_at", instant, "must be a date"),
       };
+      if (rec.get("latitude") || rec.get("longitude")) {
+        offer.location = {
+          lat: need(rec, "latitude", coord(-90, 90), "must be a latitude from -90 to 90 (give both latitude and longitude, or neither)"),
+          lng: need(rec, "longitude", coord(-180, 180), "must be a longitude from -180 to 180 (give both latitude and longitude, or neither)"),
+        };
+      }
       if (rec.get("title")) {
         offer.details = {
           title: rec.get("title").slice(0, 120),
@@ -158,11 +177,12 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
           bathrooms: need(rec, "bathrooms", (s) => (s === "" ? null : halves(s)), "must be a number like 2 or 1.5, or blank"),
         };
       }
-      const fromAirbnb = need(rec, "prices_from", (s) => (s === "airbnb" ? true : s === "" || s === "direct" ? false : undefined), "must be airbnb, direct, or blank") === true;
-      if (fromAirbnb && offer.bookingUrl && isAirbnbLink(offer.bookingUrl)) {
-        problems.push(`Row ${rec.row}: booking_url must be the host's direct booking page when prices_from is airbnb (on Airbnb, guests would pay the Airbnb price)`);
+      const platform = need(rec, "prices_from", pricesFrom, "must be airbnb, vrbo, booking_com, direct, or blank") ?? null;
+      if (platform && offer.bookingUrl && PLATFORM_HOSTS[platform].test(new URL(offer.bookingUrl).hostname)) {
+        const name = PLATFORM_NAMES[platform];
+        problems.push(`Row ${rec.row}: booking_url must be the host's direct booking page when prices_from is ${platform} (on ${name}, guests would pay the ${name} price)`);
       }
-      entry = { offer, signature, fromAirbnb };
+      entry = { offer, signature, platform };
       listings.set(id, entry);
     } else if (entry.signature !== signature) {
       problems.push(`Row ${rec.row}: listing ${id} details differ from its earlier row (only ${RATE_COLUMNS.join(", ")} may change between rows)`);
@@ -180,11 +200,11 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
     for (const d of nights) rates[d] = rate;
   }
   if (problems.length) throw new ImportError(problems);
-  for (const { offer: o, fromAirbnb } of listings.values()) {
-    if (!fromAirbnb) continue;
-    o.airbnbPrice = { nightlyRatesCents: o.nightlyRatesCents, mandatoryFeesCents: o.mandatoryFeesCents };
-    o.nightlyRatesCents = Object.fromEntries(Object.entries(o.nightlyRatesCents).map(([d, c]) => [d, fromAirbnbPrice(c)]));
-    o.mandatoryFeesCents = fromAirbnbPrice(o.mandatoryFeesCents);
+  for (const { offer: o, platform } of listings.values()) {
+    if (!platform) continue;
+    o.platformPrice = { platform, nightlyRatesCents: o.nightlyRatesCents, mandatoryFeesCents: o.mandatoryFeesCents };
+    o.nightlyRatesCents = Object.fromEntries(Object.entries(o.nightlyRatesCents).map(([d, c]) => [d, fromPlatformPrice(c, platform)]));
+    o.mandatoryFeesCents = fromPlatformPrice(o.mandatoryFeesCents, platform);
   }
   return { kind, offers: [...listings.values()].map((e) => e.offer), marketNames };
 }

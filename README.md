@@ -9,8 +9,8 @@ The repo has two parts:
 - **`src/`: the pure algorithm.** Inputs in, results out. No database, network, clock or randomness.
 - **`server/`: the app that runs it automatically.** Imports data files you drop in a folder,
   keeps them in SQLite, rebuilds baselines when price data changes, and serves the traveler search
-  page and API. Runs on your computer with **no runtime dependencies** (Node 24's built-in
-  `node:sqlite` and `node:http`).
+  page with its map and API. Runs on your computer on Node 24's built-in `node:sqlite` and `node:http`;
+  the only dependency is the Leaflet map library, served to the browser.
 
 ## Run the app
 
@@ -18,7 +18,7 @@ Needs [Node.js 24](https://nodejs.org/) or newer.
 
 ```bash
 npm install
-npm run sample-data   # optional: 40 fictional homes in two fake areas, written to data/inbox
+npm run sample-data   # optional: 40 fictional homes in two fake areas (on a map of NE Pennsylvania), written to data/inbox
 npm start             # http://localhost:3000
 ```
 
@@ -65,41 +65,76 @@ which kind of file it is from the columns:
 | `opted_in_at` | `2026-10-01` | **blank = not opted in, never shown**. To remove a listing, re-send it blank |
 | `updated_at` | | optional; blank = time of import (offers go stale after 14 days) |
 | `expires_at` | `2027-01-31` | |
-| `prices_from` | `airbnb` | optional. `airbnb` = the rates and fees above are the host's Airbnb prices (see below). Blank or `direct` = use them as given |
+| `prices_from` | `airbnb` | optional. `airbnb`, `vrbo` or `booking_com` = the rates and fees above are the host's prices on that platform (see Pricing). Blank or `direct` = use them as given |
 | `title`, `town`, `description` | `Hemlock Hollow Cabin` | optional, shown to travelers. Without a title the site says "3-bedroom home" |
 | `bathrooms` | `2.5` | optional; whole or half numbers |
+| `latitude`, `longitude` | `41.0601`, `-75.6123` | optional, both or neither. **Kept private**: travelers see an approximate spot (see Map search) |
 
-### Pricing: 7% less than Airbnb
+### Pricing: always under market, at an 8% host fee
 
-Hosts pay Market Scope a smaller fee (8%) than Airbnb (15%), so every listing sent with Airbnb prices
-(`prices_from` = `airbnb`) is shown **7% below its Airbnb price** (`airbnbDiscountPct` in `src/config.ts`).
-The host still comes out slightly ahead:
+Market Scope charges hosts **8%**. The other platforms charge more (reference figures from
+[Triad Vacation Rentals' fee breakdown](https://triadvacationrentals.com/blog/how-much-do-airbnb-vrbo-and-booking-com-really-charge-a-complete-fee-breakdown),
+updated Oct 16 2026). All of them take their fee on the nightly rate plus cleaning and other fees, not taxes:
 
-| | Guest pays | Host fee | Host keeps |
+| Platform | Host fee used | Notes |
+|---|---|---|
+| Airbnb | 15.5% | host-only fee |
+| Vrbo | 12% | single commission incl. payment processing, bookings from Oct 29 2026; Vrbo also adds a guest service fee (not counted here) |
+| Booking.com | 15% | typical; contracts range 10–25%, plus 1.1–3.1% if using its payments |
+| **Market Scope** | **8%** | |
+
+When a host sends their price from one of those platforms (`prices_from`), Market Scope lists the
+price that leaves the host **exactly the same take-home pay** at our 8% fee:
+
+> our price = their price × (100 − their fee) ÷ (100 − 8)
+
+and never more than **99% of their price** (`minUnderMarketPct`), so we are always under market even if
+fees change. Nightly rates and cleaning/mandatory fees are each converted and rounded half-up to the cent.
+
+| A $150 night on… | Our price | Guest saves | Host keeps (either way) |
 |---|---|---|---|
-| On Airbnb | $150.00 | 15% | $127.50 |
-| On Market Scope | $139.50 | 8% | $128.34 |
+| Airbnb | $137.77 | 8.2% | $126.75 |
+| Booking.com | $138.59 | 7.6% | $127.50 |
+| Vrbo | $143.48 | 4.3% (more after Vrbo's guest fee) | $132.00 |
 
-Nightly rates and cleaning/mandatory fees are each reduced by 7% and rounded half-up to the cent.
-Travelers see the Airbnb price struck through next to ours and a line like "$45.91 less than this
-home's Airbnb price". The lower price also feeds into deal scoring, so more stays qualify as good or great value.
+All rates live in `hostFeePct` and `minUnderMarketPct` in `src/config.ts`; change them there to adjust.
+Travelers see the platform price struck through next to ours, a badge like "8% less than Airbnb", and a
+line like "$45.91 less than this home's Airbnb price". The lower price also feeds into deal scoring.
 
-Because the traveler must actually be able to book at the lower price, a listing with
-`prices_from` = `airbnb` **must link to the host's direct booking page**. An airbnb.com link is
-rejected, since a guest following it would pay the Airbnb price.
+Because the traveler must actually be able to book at the lower price, a listing with `prices_from`
+set **must link to the host's direct booking page**. A link to that same platform (airbnb.com,
+vrbo.com, booking.com) is rejected, since a guest following it would pay the platform's price.
+
+### Map search
+
+The site shows the homes on a map next to the list, and **the visible map is the search box**: pan or
+zoom and the list updates ("Search as I move the map"; untick it to get a "Search this area" button).
+"Jump to area" zooms to a market. A map area can span markets; each home is still compared with its
+own market's typical prices.
+
+- **Privacy:** exact `latitude`/`longitude` never leave the server. Each pin is moved 150–450 m in a fixed
+  direction per listing (so it can't be averaged back), and the home's page shows a 500 m circle with
+  "the host shares the exact address after you book".
+- **Map tiles** come from OpenStreetMap (free for light use, with the credit line shown). Before real
+  traffic, switch `TILE_HOST` in `server/app.ts` to a tile provider such as MapTiler or Stadia (API key, usage-based price).
+- **Hosts give addresses, not coordinates.** Converting them (geocoding) is not built yet; until then the
+  CSV needs `latitude`/`longitude`. Homes without them are still listed, just not on the map.
+- The map library (Leaflet 1.9.4, BSD license) is served by the app itself, so the page loads no outside scripts.
 
 Settings (environment variables): `PORT` (3000), `HOST` (127.0.0.1, so it's only reachable from this
 computer), `MARKET_SCOPE_DATA` (`./data`), `MARKET_SCOPE_TZ` (`America/New_York`, the "today" for check-in rules).
 
 ### API
 
-- `GET /api/search?market=&checkIn=YYYY-MM-DD&checkOut=&guests=` plus optional `bedroomsMin`, `pets=true`,
+Every endpoint that lists homes takes `market=` and/or `bbox=west,south,east,north` (degrees; the map's visible area).
+
+- `GET /api/search?bbox=…&checkIn=YYYY-MM-DD&checkOut=&guests=` plus optional `market`, `bedroomsMin`, `pets=true`,
   `amenities=hot_tub,wifi`, `maxTotal` (dollars), `sort` (`best_deal` | `price_asc` | `price_desc`), `pageSize`, `cursor`.
-  Returns `results` (each `DealResult` plus `bedrooms` and `maxGuests`), `nextCursor`, `totalEligible`, `marketName`.
+  Returns `results` (each `DealResult` plus the home's details, `marketName` and approximate `location`), `nextCursor`, `totalEligible`.
   Exclusion reasons stay internal.
-- `GET /api/listings?market=` plus optional `guests`, `bedroomsMin`, `pets=true`, `sort=price_desc`: every listable home in the area, cheapest upcoming night first (no dates needed).
-- `GET /api/listings/<listingId>`: one home with its details and average nightly prices for the next 12 months, ours vs. Airbnb.
-- `GET /api/markets`: areas that have at least one host offer, plus the current discount percent.
+- `GET /api/listings?bbox=…` plus optional `market`, `guests`, `bedroomsMin`, `pets=true`, `sort=price_desc`: every listable home, cheapest upcoming night first (no dates needed).
+- `GET /api/listings/<listingId>`: one home with its details, approximate location and average nightly prices for the next 12 months, ours vs. its platform.
+- `GET /api/markets`: areas with at least one host offer and their map bounds, the host fee table, and map tile settings.
 - `GET /api/status`: row counts and the last 20 imports with any problems.
 
 ## Develop

@@ -25,7 +25,7 @@ export function checkEligibility(o: HostOffer, q: SearchQuery, cfg: Config = DEF
 
   const unlistable = unlistableReason(o, q.now, cfg);
   if (unlistable) return fail(unlistable);
-  if (o.propertyClass.market !== q.market) return fail("wrong_market");
+  if (q.market !== undefined && o.propertyClass.market !== q.market) return fail("wrong_market");
   if (o.propertyClass.propertyType !== "entire_home") return fail("unsupported_property_type");
   if (q.bedroomsMin !== undefined && !(o.propertyClass.bedrooms >= q.bedroomsMin)) return fail("too_few_bedrooms");
   if (!isDate(q.checkIn) || !isDate(q.checkOut) || q.checkIn >= q.checkOut) return fail("invalid_dates");

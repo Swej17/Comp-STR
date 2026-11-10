@@ -15,6 +15,11 @@ const TOWNS: Record<string, string[]> = {
   [LAKE]: ["Pine Lake", "Laurel Point", "North Shore", "Fern Hollow"],
   [RIDGE]: ["Ridge Valley", "Summit Crest", "Birch Run", "Upper Falls"],
 };
+// Fictional towns pinned to a wooded stretch of northeastern Pennsylvania so the map has somewhere to show.
+const TOWN_CENTERS: Record<string, [lat: number, lng: number]> = {
+  "Pine Lake": [41.06, -75.62], "Laurel Point": [41.085, -75.59], "North Shore": [41.095, -75.65], "Fern Hollow": [41.04, -75.665],
+  "Ridge Valley": [41.0, -75.48], "Summit Crest": [40.985, -75.44], "Birch Run": [41.02, -75.45], "Upper Falls": [40.965, -75.5],
+};
 const usd = (c: number) => `${Math.floor(c / 100)}.${String(c % 100).padStart(2, "0")}`;
 const monthStart = (date: string, plus: number) => {
   const total = Number(date.slice(0, 4)) * 12 + Number(date.slice(5, 7)) - 1 + plus;
@@ -25,6 +30,7 @@ type Listing = {
   id: string; market: string; bedrooms: number; baths: number; guests: number; pets: string;
   yes: string; no: string; factor: number; fees: number; title: string; town: string; description: string;
   optedIn?: boolean;
+  platform?: "airbnb" | "vrbo" | "booking_com"; // where the reference price comes from (default airbnb)
 };
 
 // Hand-made homes the tests rely on. `factor` = Airbnb price vs. the area's typical price.
@@ -37,8 +43,8 @@ const FIXED: Listing[] = [
   { id: "PL-106", market: LAKE, bedrooms: 5, baths: 3.5, guests: 12, pets: "yes", yes: "hot_tub;wifi", no: "", factor: 1, fees: 25_000, title: "Laurel Ridge Estate", town: "Laurel Point", description: "Five bedrooms on three wooded acres, made for reunions." },
   { id: "PL-107", market: LAKE, bedrooms: 7, baths: 5, guests: 14, pets: "no", yes: "hot_tub;wifi", no: "", factor: 0.8, fees: 30_000, title: "Grand Pines Manor", town: "North Shore", description: "Seven bedrooms and a great room with a two-story fireplace." },
   { id: "RV-201", market: RIDGE, bedrooms: 2, baths: 1, guests: 6, pets: "yes", yes: "wifi;ski_storage", no: "", factor: 0.72, fees: 0, title: "Summit Crest A-Frame", town: "Summit Crest", description: "A bright A-frame minutes from the lifts, with a boot room and ski storage." },
-  { id: "RV-202", market: RIDGE, bedrooms: 3, baths: 2, guests: 8, pets: "no", yes: "hot_tub;wifi", no: "", factor: 0.95, fees: 0, title: "Upper Falls Chalet", town: "Upper Falls", description: "A chalet near the falls trail with a hot tub under the stars." },
-  { id: "RV-203", market: RIDGE, bedrooms: 4, baths: 2.5, guests: 10, pets: "", yes: "wifi", no: "", factor: 0.8, fees: 0, title: "Birch Run Farmhouse", town: "Birch Run", description: "A restored farmhouse with a long dining table and mountain views." },
+  { id: "RV-202", market: RIDGE, bedrooms: 3, baths: 2, guests: 8, pets: "no", yes: "hot_tub;wifi", no: "", factor: 0.95, fees: 0, platform: "vrbo", title: "Upper Falls Chalet", town: "Upper Falls", description: "A chalet near the falls trail with a hot tub under the stars." },
+  { id: "RV-203", market: RIDGE, bedrooms: 4, baths: 2.5, guests: 10, pets: "", yes: "wifi", no: "", factor: 0.8, fees: 0, platform: "booking_com", title: "Birch Run Farmhouse", town: "Birch Run", description: "A restored farmhouse with a long dining table and mountain views." },
 ];
 
 const FIRST = ["Cedar", "Maple", "Bluestone", "Fox Run", "Juniper", "Spruce", "Owl's Nest", "Aspen", "Brookside",
@@ -74,6 +80,7 @@ function generated(): Listing[] {
       fees: (bedrooms * 30 + 50) * 100,
       description: `${title} is a ${bedrooms}-bedroom home in ${town} with ${pick(FEATURES)} and ${pick(FEATURES)}.`,
       optedIn: i !== 29, // one host hasn't opted in, so it never appears
+      platform: pick(["airbnb", "airbnb", "vrbo", "booking_com"] as const),
     });
   }
   return out;
@@ -89,9 +96,15 @@ export function sampleCsvs(today: string): { observations: string; offers: strin
   ]);
 
   const end = monthStart(today, 12);
-  const rows: (string | number)[][] = [[...OFFER_COLUMNS, "market_name", "prices_from", "title", "town", "description", "bathrooms"]];
+  const rows: (string | number)[][] = [[
+    ...OFFER_COLUMNS, "market_name", "prices_from", "title", "town", "description", "bathrooms", "latitude", "longitude",
+  ]];
+  const scatter = seeded(77);
   for (const l of [...FIXED, ...generated()]) {
     const marketFactor = l.market === LAKE ? 1 : 0.85;
+    const [townLat, townLng] = TOWN_CENTERS[l.town]!;
+    const lat = (townLat + (scatter() - 0.5) * 0.03).toFixed(5); // within ~1.7 km of the town center
+    const lng = (townLng + (scatter() - 0.5) * 0.04).toFixed(5);
     for (let k = 0; k < 12; k++) {
       const from = k === 0 ? today : monthStart(today, k);
       const month = Number(from.slice(5, 7));
@@ -100,7 +113,7 @@ export function sampleCsvs(today: string): { observations: string; offers: strin
         l.id, `host-${l.id}`, l.market, l.bedrooms, l.guests, l.pets, l.yes, l.no,
         today, end, from, monthStart(today, k + 1), usd(airbnbNightly), usd(l.fees),
         2, 21, `https://example.com/book/${l.id}`, l.optedIn === false ? "" : today, addDays(today, 60), NAMES[l.market]!,
-        "airbnb", l.title, l.town, `Fictional sample home. ${l.description}`, l.baths,
+        l.platform ?? "airbnb", l.title, l.town, `Fictional sample home. ${l.description}`, l.baths, lat, lng,
       ]);
     }
   }

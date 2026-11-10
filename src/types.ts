@@ -2,6 +2,9 @@ export type Currency = "USD";
 export type Confidence = "high" | "medium" | "low";
 export type PropertyType = "entire_home"; // v1 supports whole homes only
 export type PriceBasis = "nightly_rate" | "nightly_incl_mandatory_fees";
+/** Where a host's reference price comes from. */
+export type Platform = "airbnb" | "vrbo" | "booking_com";
+export const PLATFORM_NAMES: Record<Platform, string> = { airbnb: "Airbnb", vrbo: "Vrbo", booking_com: "Booking.com" };
 export type SortOrder = "best_deal" | "price_asc" | "price_desc";
 export type Tier = "great" | "good" | "none" | "needs_review" | "no_score";
 
@@ -40,14 +43,16 @@ export type HostOffer = {
   optedInAt: string | null;
   updatedAt: string;
   expiresAt: string;
-  /** Set when the host sent Airbnb prices that were converted to Market Scope prices: the originals, for the savings message. */
-  airbnbPrice?: { nightlyRatesCents: Record<string, number>; mandatoryFeesCents: number };
+  /** Set when the host sent their price on another platform and we converted it: the originals, for the savings message. */
+  platformPrice?: { platform: Platform; nightlyRatesCents: Record<string, number>; mandatoryFeesCents: number };
   /** Display details for travelers; the algorithm never reads these. */
   details?: { title: string; town: string; description: string; bathrooms: number | null };
+  /** Exact position. Never sent to travelers as-is; the server publishes an approximate spot. */
+  location?: { lat: number; lng: number };
 };
 
 export type SearchQuery = {
-  market: string;
+  market?: string; // omit to search every market in the offers given (e.g. a map area spanning two)
   checkIn: string; // YYYY-MM-DD, property-local
   checkOut: string; // exclusive
   guests: number;
@@ -87,7 +92,8 @@ export type DealResult = {
   nights: number;
   offerTotalCents: number; // nightly rates + mandatory fees, before taxes
   feesCents: number;
-  airbnbTotalCents: number | null; // the same stay at the host's Airbnb price, when known
+  platform: Platform | null; // where the comparison price comes from
+  platformTotalCents: number | null; // the same stay at the host's price on that platform, when known
   baselineTotalCents: number | null;
   dealPct: number | null; // ratio, e.g. 0.32; null for no_score and needs_review
   tier: Tier;
