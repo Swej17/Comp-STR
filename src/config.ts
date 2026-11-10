@@ -25,14 +25,14 @@ export type Config = {
   readonly maxStayNights: number;
   readonly pageSize: { readonly default: number; readonly max: number };
   /**
-   * Host fees as whole percents. A host who sends their Airbnb price is listed at the price that
-   * nets them the same: price × (100 − airbnb) ÷ (100 − marketScope).
+   * Whole percent off a host's Airbnb price. Our lower host fee pays for it: with Airbnb at 15% and
+   * Market Scope at 8%, a 7% lower price still leaves the host slightly more (0.93 × 0.92 = 85.6% vs 85%).
    */
-  readonly hostFeePct: { readonly marketScope: number; readonly airbnb: number };
+  readonly airbnbDiscountPct: number;
 };
 
 export const DEFAULT_CONFIG: Config = Object.freeze({
-  version: "2026-11-10.1",
+  version: "2026-11-10.2",
   minSampleSize: 20,
   sampleConfidence: { high: 50, medium: 30 },
   maxBaselineAgeDays: 400,
@@ -44,9 +44,9 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   maxOfferAgeDays: 14,
   maxStayNights: 90,
   pageSize: { default: 20, max: 50 },
-  hostFeePct: { marketScope: 8, airbnb: 15 },
+  airbnbDiscountPct: 7,
 });
 
-/** The price that leaves the host the same take-home at Market Scope's fee as at Airbnb's. Half-up to whole cents. */
+/** Market Scope's price for a host's Airbnb price: the configured discount, half-up to whole cents. */
 export const fromAirbnbPrice = (cents: number, cfg: Config = DEFAULT_CONFIG): number =>
-  Math.round((cents * (100 - cfg.hostFeePct.airbnb)) / (100 - cfg.hostFeePct.marketScope));
+  Math.round((cents * (100 - cfg.airbnbDiscountPct)) / 100);

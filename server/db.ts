@@ -74,6 +74,11 @@ export function saveOffers(db: Db, offers: HostOffer[]): void {
 export const loadOffers = (db: Db, market: string): HostOffer[] =>
   db.prepare("SELECT data FROM offers WHERE market = ?").all(market).map((r) => JSON.parse(String(r.data)) as HostOffer);
 
+export function loadOffer(db: Db, listingId: string): HostOffer | undefined {
+  const row = db.prepare("SELECT data FROM offers WHERE listing_id = ?").get(listingId);
+  return row ? (JSON.parse(String(row.data)) as HostOffer) : undefined;
+}
+
 export function saveMarketNames(db: Db, names: Map<string, string>): void {
   const up = db.prepare("INSERT INTO markets (id, name) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name");
   for (const [id, name] of names) up.run(id, name);

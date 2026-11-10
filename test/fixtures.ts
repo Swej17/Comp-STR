@@ -55,7 +55,7 @@ export const query = (over: Partial<SearchQuery> = {}): SearchQuery => ({
 // Clear summer peak (July), low March. Index 0 = January.
 export const SEASON = [0.6, 0.6, 0.5, 0.55, 0.7, 0.95, 1.0, 0.97, 0.75, 0.7, 0.6, 0.75];
 
-function seeded(seed: number): () => number { // mulberry32, deterministic
+export function seeded(seed: number): () => number { // mulberry32, deterministic
   return () => {
     seed = (seed + 0x6d2b79f5) | 0;
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);

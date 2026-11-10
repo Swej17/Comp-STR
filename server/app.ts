@@ -1,10 +1,66 @@
 import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
-import { isDate } from "../src/dates.ts";
-import { buildBaselines, search, type BaselineIndex, type SearchQuery, type SortOrder } from "../src/index.ts";
-import { listMarkets, loadObservations, loadOffers, marketName, status, type Db } from "./db.ts";
+import { addDays, isDate, monthOf } from "../src/dates.ts";
+import {
+  buildBaselines, DEFAULT_CONFIG, search, unlistableReason,
+  type BaselineIndex, type HostOffer, type SearchQuery, type SortOrder,
+} from "../src/index.ts";
+import { listMarkets, loadObservations, loadOffer, loadOffers, marketName, status, type Db } from "./db.ts";
 import { dollarsToCents } from "./importer.ts";
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const bookable = (o: HostOffer, d: string) =>
+  d >= o.availableFrom && d < o.availableTo && Number.isSafeInteger(o.nightlyRatesCents[d]);
+
+/** What travelers see about a home, plus its cheapest night in the 90 days from `from`. */
+export function listingCard(o: HostOffer, from: string, marketDisplayName: string) {
+  let cheapest: string | null = null;
+  for (let i = 0, d = from; i < 90; i++, d = addDays(d, 1)) {
+    if (bookable(o, d) && (cheapest === null || o.nightlyRatesCents[d]! < o.nightlyRatesCents[cheapest]!)) cheapest = d;
+  }
+  const home = o.propertyClass.bedrooms === 0 ? "Studio" : `${o.propertyClass.bedrooms}-bedroom home`;
+  return {
+    listingId: o.listingId,
+    title: o.details?.title || home,
+    town: o.details?.town || marketDisplayName,
+    description: o.details?.description ?? "",
+    bedrooms: o.propertyClass.bedrooms,
+    bathrooms: o.details?.bathrooms ?? null,
+    maxGuests: o.maxGuests,
+    petsAllowed: o.petsAllowed,
+    amenities: Object.keys(o.amenities).filter((a) => o.amenities[a] === true).sort(),
+    bookingUrl: o.bookingUrl,
+    fromNightlyCents: cheapest ? o.nightlyRatesCents[cheapest]! : null,
+    fromAirbnbNightlyCents: cheapest ? o.airbnbPrice?.nightlyRatesCents[cheapest] ?? null : null,
+    feesCents: o.mandatoryFeesCents,
+    airbnbFeesCents: o.airbnbPrice?.mandatoryFeesCents ?? null,
+  };
+}
+
+/** Average nightly price per month for the next 12 months, ours and Airbnb's (integer cents, half-up). */
+function monthlyPrices(o: HostOffer, today: string) {
+  const months: { month: string; nights: number; nightlyCents: number; airbnbNightlyCents: number | null }[] = [];
+  const sums = new Map<string, { n: number; ours: number; air: number; airKnown: boolean }>();
+  for (let i = 0, d = today; i < 366; i++, d = addDays(d, 1)) {
+    if (!bookable(o, d)) continue;
+    const key = d.slice(0, 7);
+    const s = sums.get(key) ?? sums.set(key, { n: 0, ours: 0, air: 0, airKnown: true }).get(key)!;
+    const air = o.airbnbPrice?.nightlyRatesCents[d];
+    s.n++;
+    s.ours += o.nightlyRatesCents[d]!;
+    if (air === undefined) s.airKnown = false; else s.air += air;
+  }
+  for (const [key, s] of sums) {
+    months.push({
+      month: `${MONTH_NAMES[monthOf(`${key}-01`) - 1]} ${key.slice(0, 4)}`,
+      nights: s.n,
+      nightlyCents: Math.round(s.ours / s.n),
+      airbnbNightlyCents: s.airKnown ? Math.round(s.air / s.n) : null,
+    });
+  }
+  return months.slice(0, 12);
+}
 
 /** The instant `d` as a local ISO timestamp with offset in `timeZone`, e.g. 2026-11-09T19:30:00-05:00. */
 export function localIso(d: Date, timeZone: string): string {
@@ -102,8 +158,47 @@ export function createApp({ db, timeZone, now, publicDir, log = console.log }: A
         });
         return void res.end(readFileSync(join(publicDir, asset[0])));
       }
-      if (url.pathname === "/api/markets") return send(200, { markets: listMarkets(db) });
+      if (url.pathname === "/api/markets") return send(200, { markets: listMarkets(db), discountPct: DEFAULT_CONFIG.airbnbDiscountPct });
       if (url.pathname === "/api/status") return send(200, { ...status(db), baselines: cached?.index.baselines.size ?? null });
+
+      // Browse every listable home in an area, cheapest upcoming night first. No dates needed.
+      if (url.pathname === "/api/listings") {
+        const nowIso = localIso(now(), timeZone);
+        const p = url.searchParams;
+        const market = p.get("market") ?? "";
+        if (!market) return send(400, { error: "Choose an area" });
+        const guests = Number(p.get("guests") || 1);
+        const bedroomsMin = Number(p.get("bedroomsMin") || 0);
+        if (!Number.isInteger(guests) || guests < 1 || !Number.isInteger(bedroomsMin) || bedroomsMin < 0) {
+          return send(400, { error: "Guests and bedrooms must be whole numbers" });
+        }
+        const name = marketName(db, market);
+        const listings = loadOffers(db, market)
+          .filter((o) => unlistableReason(o, nowIso) === null && guests <= o.maxGuests && o.propertyClass.bedrooms >= bedroomsMin)
+          .filter((o) => p.get("pets") !== "true" || o.petsAllowed === true)
+          .map((o) => listingCard(o, nowIso.slice(0, 10), name))
+          .filter((c) => c.fromNightlyCents !== null);
+        const desc = p.get("sort") === "price_desc";
+        listings.sort((a, b) => (desc ? b.fromNightlyCents! - a.fromNightlyCents! : a.fromNightlyCents! - b.fromNightlyCents!)
+          || (a.listingId < b.listingId ? -1 : 1));
+        // shortcut: returns every match in one response; add paging past a few hundred homes per area.
+        return send(200, { marketName: name, total: listings.length, listings });
+      }
+
+      const detail = /^\/api\/listings\/([^/]{1,200})$/.exec(url.pathname);
+      if (detail) {
+        const nowIso = localIso(now(), timeZone);
+        const o = loadOffer(db, decodeURIComponent(detail[1]!));
+        if (!o || unlistableReason(o, nowIso) !== null) return send(404, { error: "This home isn't available on Market Scope" });
+        const today = nowIso.slice(0, 10);
+        return send(200, {
+          ...listingCard(o, today, marketName(db, o.propertyClass.market)),
+          market: o.propertyClass.market,
+          minNights: o.minNights,
+          maxNights: o.maxNights,
+          months: monthlyPrices(o, today),
+        });
+      }
 
       if (url.pathname === "/api/search") {
         const nowIso = localIso(now(), timeZone);
@@ -123,11 +218,7 @@ export function createApp({ db, timeZone, now, publicDir, log = console.log }: A
         return send(200, {
           ...publicPart,
           marketName: name,
-          results: publicPart.results.map((r) => ({
-            ...r,
-            bedrooms: byId.get(r.listingId)!.propertyClass.bedrooms,
-            maxGuests: byId.get(r.listingId)!.maxGuests,
-          })),
+          results: publicPart.results.map((r) => ({ ...listingCard(byId.get(r.listingId)!, q.checkIn, name), ...r })),
         });
       }
       send(404, { error: "Not found" });

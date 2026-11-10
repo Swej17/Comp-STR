@@ -4,60 +4,67 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Market Scope</title>
-  <meta name="description" content="Find vacation homes priced below what's normal for the season, then book directly with the host.">
+  <meta name="description" content="Vacation homes listed for less than their Airbnb price. Book directly with the host.">
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header class="top">
     <div class="wrap">
-      <p class="brand">Market Scope</p>
-      <h1>Find stays priced below what's normal for the season</h1>
-      <p class="lede">We compare each host's price with typical prices for similar homes in the same area and month. You book directly with the host.</p>
+      <a class="brand" href="#/">Market Scope</a>
+      <h1>The same homes, <span class="accent">for less than Airbnb</span></h1>
+      <p class="lede">Hosts pay us a smaller fee, so they list here for <strong id="discount">7%</strong> less than their Airbnb price. You book directly with the host.</p>
     </div>
   </header>
 
   <main class="wrap">
-    <form id="search" class="search">
-      <label class="wide">Area
-        <select name="market" required></select>
-      </label>
-      <label>Check-in
-        <input type="date" name="checkIn" required>
-      </label>
-      <label>Check-out
-        <input type="date" name="checkOut" required>
-      </label>
-      <label>Guests
-        <input type="number" name="guests" min="1" max="50" value="2" required>
-      </label>
-      <label>Bedrooms
-        <select name="bedroomsMin">
-          <option value="">Any</option>
-          <option value="1">1+</option>
-          <option value="2">2+</option>
-          <option value="3">3+</option>
-          <option value="4">4+</option>
-        </select>
-      </label>
-      <label>Sort by
-        <select name="sort">
-          <option value="best_deal">Best value</option>
-          <option value="price_asc">Lowest price</option>
-          <option value="price_desc">Highest price</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" name="pets" value="true"> Bringing pets</label>
-      <button type="submit">Search</button>
-    </form>
+    <section id="list-view">
+      <form id="search" class="search" aria-label="Find a home">
+        <label class="area">Area
+          <select name="market" required></select>
+        </label>
+        <label>Check-in <span class="opt">optional</span>
+          <input type="date" name="checkIn">
+        </label>
+        <label>Check-out
+          <input type="date" name="checkOut">
+        </label>
+        <label>Guests
+          <input type="number" name="guests" min="1" max="50" value="2" required>
+        </label>
+        <label>Bedrooms
+          <select name="bedroomsMin">
+            <option value="">Any</option>
+            <option value="1">1+</option>
+            <option value="2">2+</option>
+            <option value="3">3+</option>
+            <option value="4">4+</option>
+          </select>
+        </label>
+        <label>Sort by
+          <select name="sort">
+            <option value="best_deal">Best value</option>
+            <option value="price_asc">Lowest price</option>
+            <option value="price_desc">Highest price</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="pets" value="true"> Bringing pets</label>
+        <div class="actions">
+          <button type="submit">Show homes</button>
+          <button type="button" id="clear-dates" class="ghost" hidden>Clear dates</button>
+        </div>
+      </form>
 
-    <p id="status" class="status" role="status" aria-live="polite"></p>
-    <ol id="results" class="results"></ol>
-    <button id="more" class="more" type="button" hidden>Show more</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <ol id="results" class="grid"></ol>
+      <button id="more" class="more" type="button" hidden>Show more</button>
+    </section>
+
+    <section id="detail-view" hidden></section>
   </main>
 
   <footer class="wrap foot">
-    Market Scope never takes bookings or payments. Prices come from hosts and may change. Taxes may apply.
+    Market Scope never takes bookings or payments; you book on the host's own site. Prices come from hosts and may change. Taxes may apply.
   </footer>
 </body>
 </html>

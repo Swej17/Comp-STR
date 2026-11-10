@@ -25,7 +25,9 @@ export const OFFER_COLUMNS = [
 ];
 // Optional in both: market_name, property_type. Optional for offers: updated_at (blank = time of import).
 const RATE_COLUMNS = ["rate_from", "rate_to", "nightly_rate_usd"];
-const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at", "prices_from"];
+const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at", "prices_from", "title", "town", "description", "bathrooms"];
+// title, town, description, bathrooms (optional): what travelers see. Without a title the site shows "3-bedroom home".
+const halves: P<number> = (s) => (/^\d+(\.5)?$/.test(s) ? Number(s) : undefined);
 // prices_from (optional): "airbnb" = the rates and fees are the host's Airbnb prices; we list the
 // lower price that nets the host the same at our fee. Blank or "direct" = use the prices as given.
 const isAirbnbLink = (url: string) => /(^|\.)airbnb\.[a-z.]+$/i.test(new URL(url).hostname);
@@ -148,6 +150,14 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
         updatedAt: rec.get("updated_at") === "" ? importedAt : need(rec, "updated_at", instant, "must be a date"),
         expiresAt: need(rec, "expires_at", instant, "must be a date"),
       };
+      if (rec.get("title")) {
+        offer.details = {
+          title: rec.get("title").slice(0, 120),
+          town: rec.get("town").slice(0, 80),
+          description: rec.get("description").slice(0, 2_000),
+          bathrooms: need(rec, "bathrooms", (s) => (s === "" ? null : halves(s)), "must be a number like 2 or 1.5, or blank"),
+        };
+      }
       const fromAirbnb = need(rec, "prices_from", (s) => (s === "airbnb" ? true : s === "" || s === "direct" ? false : undefined), "must be airbnb, direct, or blank") === true;
       if (fromAirbnb && offer.bookingUrl && isAirbnbLink(offer.bookingUrl)) {
         problems.push(`Row ${rec.row}: booking_url must be the host's direct booking page when prices_from is airbnb (on Airbnb, guests would pay the Airbnb price)`);

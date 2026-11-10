@@ -1,15 +1,30 @@
-const form = document.getElementById("search");
-const statusEl = document.getElementById("status");
-const list = document.getElementById("results");
-const more = document.getElementById("more");
+const $ = (sel) => document.querySelector(sel);
+const form = $("#search");
+const statusEl = $("#status");
+const grid = $("#results");
+const more = $("#more");
+const listView = $("#list-view");
+const detailView = $("#detail-view");
+const clearDates = $("#clear-dates");
 const submit = form.querySelector("button[type=submit]");
 const TIER_LABEL = { great: "Great value", good: "Good value" };
+let discountPct = 7;
 let cursor = null;
+let loadedOnce = false;
 
+// ---------- formatting ----------
 const pad = (n) => String(n).padStart(2, "0");
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return isoDate(d); };
-const money = (cents) => "$" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (c) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const dollars = (c) => "$" + Math.round(c / 100).toLocaleString("en-US");
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const AMENITY_NAMES = { ev_charger: "EV charger", wifi: "Wi-Fi" };
+const amenityName = (a) => AMENITY_NAMES[a] ?? a.charAt(0).toUpperCase() + a.slice(1).replaceAll("_", " ");
+const specs = (h) => [
+  h.bedrooms === 0 ? "Studio" : plural(h.bedrooms, "bedroom"),
+  h.bathrooms != null ? plural(h.bathrooms, "bath") : null,
+  `sleeps ${h.maxGuests}`,
+].filter(Boolean).join(" · ");
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -18,49 +33,142 @@ function el(tag, className, text) {
   return node;
 }
 
-function card(r) {
+// ---------- generated illustration (no photos: every home here is fictional) ----------
+const SVG = "http://www.w3.org/2000/svg";
+let artCount = 0;
+function svg(tag, attrs, parent) {
+  const n = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.append(n);
+  return n;
+}
+function seededRandom(text) {
+  let h = 2166136261;
+  for (const ch of text) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => {
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function homeArt(h) {
+  const r = seededRandom(h.listingId);
+  const pick = (xs) => xs[Math.floor(r() * xs.length)];
+  const id = `sky${++artCount}`;
+  const art = svg("svg", { viewBox: "0 0 320 200", class: "art", role: "img", "aria-label": `Illustration of ${h.title}` });
+  const [top, bottom] = pick([["#9fd3ea", "#e4f4fa"], ["#f3c79b", "#fbe9d6"], ["#b9c8ec", "#eceffa"], ["#c4e3bd", "#eef7ea"], ["#e8b9c4", "#f9e6ea"]]);
+  const grad = svg("linearGradient", { id, x1: "0", y1: "0", x2: "0", y2: "1" }, svg("defs", {}, art));
+  svg("stop", { offset: "0", "stop-color": top }, grad);
+  svg("stop", { offset: "1", "stop-color": bottom }, grad);
+  svg("rect", { width: "320", height: "200", fill: `url(#${id})` }, art);
+  svg("circle", { cx: String(40 + r() * 240), cy: String(30 + r() * 20), r: "14", fill: "#fff6d6", opacity: "0.9" }, art);
+
+  const mountains = h.amenities.includes("mountain_view") || h.amenities.includes("ski_storage") || h.listingId.startsWith("RV");
+  if (mountains) {
+    svg("polygon", { points: "0,140 70,60 130,130 190,50 260,125 320,70 320,150 0,150", fill: "#8b9bb4" }, art);
+    svg("polygon", { points: "175,68 190,50 205,68 197,64 190,70 183,64", fill: "#ffffff", opacity: "0.85" }, art);
+  }
+  svg("path", { d: `M0 ${150 - r() * 20} Q 90 ${110 + r() * 20} 180 ${140 - r() * 10} T 320 ${130 + r() * 15} V200 H0Z`, fill: pick(["#7fa86b", "#6d9a5d", "#8bb17a"]) }, art);
+  if (h.amenities.includes("lake_access") || /lake/i.test(h.title)) {
+    svg("rect", { x: "0", y: "172", width: "320", height: "28", fill: "#6fa9cf" }, art);
+    svg("rect", { x: "30", y: "180", width: "60", height: "2", fill: "#ffffff", opacity: "0.6" }, art);
+  } else {
+    svg("rect", { x: "0", y: "172", width: "320", height: "28", fill: "#5f8a50" }, art);
+  }
+
+  const treeColor = pick(["#2f5d3a", "#3b6b45", "#2a4f35"]);
+  for (let i = 0, n = 3 + Math.floor(r() * 4); i < n; i++) {
+    const x = i % 2 ? 230 + r() * 80 : 10 + r() * 70;
+    const s = 0.7 + r() * 0.6;
+    svg("polygon", { points: `${x},${172 - 70 * s} ${x - 18 * s},${172} ${x + 18 * s},${172}`, fill: treeColor }, art);
+  }
+
+  const w = 70 + Math.min(h.bedrooms, 6) * 12;
+  const x = 160 - w / 2 + (r() - 0.5) * 30;
+  const body = pick(["#b5653f", "#8a5a3c", "#d9c7a7", "#6f7f5e", "#a33b3b", "#4f6d8a", "#e8e0cf"]);
+  const roof = pick(["#3b3b3b", "#5a2e22", "#2f4a3a", "#47505c"]);
+  if (/a-frame/i.test(h.title)) {
+    svg("polygon", { points: `${x},172 ${x + w / 2},${172 - w * 0.9} ${x + w},172`, fill: roof }, art);
+    svg("polygon", { points: `${x + w * 0.18},172 ${x + w / 2},${172 - w * 0.65} ${x + w * 0.82},172`, fill: body }, art);
+    svg("rect", { x: String(x + w / 2 - 9), y: String(172 - w * 0.35), width: "18", height: "16", fill: "#ffd98a" }, art);
+  } else {
+    const wallTop = 172 - 52;
+    svg("rect", { x: String(x), y: String(wallTop), width: String(w), height: "52", fill: body }, art);
+    svg("polygon", { points: `${x - 10},${wallTop} ${x + w / 2},${wallTop - 36} ${x + w + 10},${wallTop}`, fill: roof }, art);
+    svg("rect", { x: String(x + w - 26), y: String(wallTop - 30), width: "10", height: "18", fill: "#6b5a4e" }, art);
+    for (let wx = x + 10; wx < x + w - 30; wx += 26) {
+      svg("rect", { x: String(wx), y: String(wallTop + 12), width: "14", height: "14", fill: "#ffd98a" }, art);
+    }
+    svg("rect", { x: String(x + w - 24), y: String(172 - 30), width: "14", height: "30", fill: roof }, art);
+  }
+  return art;
+}
+
+// ---------- list view ----------
+function priceBlock(h) {
+  const box = el("div", "price");
+  if (h.offerTotalCents !== undefined) {
+    box.append(el("strong", "", money(h.offerTotalCents)), el("span", "per", ` for ${plural(h.nights, "night")}`));
+    if (h.airbnbTotalCents) box.append(el("s", "was", `${money(h.airbnbTotalCents)} on Airbnb`));
+  } else {
+    box.append(el("span", "per", "from "), el("strong", "", dollars(h.fromNightlyCents)), el("span", "per", " / night"));
+    if (h.fromAirbnbNightlyCents) box.append(el("s", "was", `${dollars(h.fromAirbnbNightlyCents)} on Airbnb`));
+  }
+  return box;
+}
+
+function card(h) {
   const li = el("li", "card");
-  const head = el("div", "card-head");
-  const home = r.bedrooms === 0 ? "Studio" : `${r.bedrooms}-bedroom home`;
-  head.append(el("h2", "", `${home} · sleeps ${r.maxGuests}`));
-  if (TIER_LABEL[r.tier]) head.append(el("span", `badge ${r.tier}`, TIER_LABEL[r.tier]));
-  li.append(head);
+  const link = el("a", "card-link");
+  link.href = `#/home/${encodeURIComponent(h.listingId)}`;
+  const media = el("div", "media");
+  media.append(homeArt(h));
+  const badges = el("div", "badges");
+  if (TIER_LABEL[h.tier]) badges.append(el("span", `badge ${h.tier}`, TIER_LABEL[h.tier]));
+  if (h.fromAirbnbNightlyCents) badges.append(el("span", "badge save", `${discountPct}% less than Airbnb`));
+  media.append(badges);
+  link.append(media);
 
-  const price = el("p", "price");
-  price.append(el("strong", "", money(r.offerTotalCents)), ` for ${r.nights} night${r.nights === 1 ? "" : "s"}`);
-  if (r.feesCents > 0) price.append(el("span", "muted", ` · includes ${money(r.feesCents)} in fees`));
-  li.append(price);
-
-  const reasons = el("ul", "reasons");
-  for (const reason of r.reasons) reasons.append(el("li", "", reason));
-  li.append(reasons);
-
-  const book = el("a", "book", "View and book on the host's site");
-  book.href = r.bookingUrl;
-  book.target = "_blank";
-  book.rel = "noopener noreferrer";
-  li.append(book);
+  const body = el("div", "card-body");
+  body.append(el("h2", "", h.title), el("p", "town", h.town), el("p", "specs", specs(h)), priceBlock(h));
+  if (h.reasons) body.append(el("p", "reason", h.reasons[0]));
+  else if (h.feesCents > 0) body.append(el("p", "fees", `+ ${money(h.feesCents)} cleaning & fees per stay`));
+  link.append(body);
+  li.append(link);
   return li;
 }
 
+function params() {
+  const p = new URLSearchParams();
+  for (const [k, v] of new FormData(form)) if (v !== "") p.set(k, v);
+  return p;
+}
+
 async function run(append) {
-  const params = new URLSearchParams();
-  for (const [k, v] of new FormData(form)) if (v !== "") params.set(k, v);
-  if (append && cursor) params.set("cursor", cursor);
+  const p = params();
+  const dated = p.has("checkIn") && p.has("checkOut");
+  if (p.has("checkIn") !== p.has("checkOut")) { statusEl.textContent = "Pick both check-in and check-out, or neither to see every home."; return; }
+  if (append && cursor) p.set("cursor", cursor);
   submit.disabled = more.disabled = true;
-  statusEl.textContent = "Searching…";
+  statusEl.textContent = "Loading homes…";
   try {
-    const res = await fetch(`/api/search?${params}`);
+    const res = await fetch(`/api/${dated ? "search" : "listings"}?${p}`);
     const body = await res.json();
     if (!res.ok) { statusEl.textContent = body.error; return; }
-    if (!append) list.replaceChildren();
-    for (const r of body.results) list.append(card(r));
-    cursor = body.nextCursor;
+    if (!append) grid.replaceChildren();
+    const homes = dated ? body.results : body.listings;
+    for (const h of homes) grid.append(card(h));
+    cursor = dated ? body.nextCursor : null;
     more.hidden = !cursor;
-    const n = body.totalEligible;
+    const n = dated ? body.totalEligible : body.total;
     statusEl.textContent = n === 0
-      ? "No homes match these dates and filters. Try other dates or fewer filters."
-      : `${n} home${n === 1 ? "" : "s"} available in ${body.marketName}`;
+      ? "No homes match. Try other dates or fewer filters."
+      : dated
+        ? `${plural(n, "home")} available in ${body.marketName} for your dates`
+        : `${plural(n, "home")} in ${body.marketName}. Add dates to see totals and how each compares with typical prices.`;
+    clearDates.hidden = !dated;
+    loadedOnce = true;
   } catch {
     statusEl.textContent = "Couldn't reach Market Scope. Is the app still running?";
   } finally {
@@ -68,26 +176,142 @@ async function run(append) {
   }
 }
 
+// ---------- detail view ----------
+async function quote(home, out, f) {
+  const p = new URLSearchParams({ market: home.market, checkIn: f.checkIn.value, checkOut: f.checkOut.value, guests: f.guests.value, pageSize: "50" });
+  out.replaceChildren(el("p", "muted", "Checking…"));
+  for (let page = 0; page < 20; page++) {
+    const res = await fetch(`/api/search?${p}`);
+    const body = await res.json();
+    if (!res.ok) { out.replaceChildren(el("p", "error", body.error)); return; }
+    const r = body.results.find((x) => x.listingId === home.listingId);
+    if (r) {
+      const box = el("div", "quote-result");
+      box.append(priceBlock(r));
+      if (TIER_LABEL[r.tier]) box.append(el("span", `badge ${r.tier}`, TIER_LABEL[r.tier]));
+      const ul = el("ul", "reasons");
+      for (const reason of r.reasons) ul.append(el("li", "", reason));
+      box.append(ul);
+      out.replaceChildren(box);
+      return;
+    }
+    if (!body.nextCursor) break;
+    p.set("cursor", body.nextCursor);
+  }
+  out.replaceChildren(el("p", "error", `Not available for those dates. Stays here are ${home.minNights}${home.maxNights ? `–${home.maxNights}` : "+"} nights; try other dates.`));
+}
+
+async function showDetail(id) {
+  listView.hidden = true;
+  detailView.hidden = false;
+  detailView.replaceChildren(el("p", "status", "Loading…"));
+  window.scrollTo(0, 0);
+  const res = await fetch(`/api/listings/${encodeURIComponent(id)}`);
+  const h = await res.json();
+  const back = el("a", "back", "← All homes");
+  back.href = "#/";
+  if (!res.ok) { detailView.replaceChildren(back, el("p", "error", h.error)); return; }
+
+  const hero = el("div", "hero-art");
+  hero.append(homeArt(h));
+  const head = el("div", "detail-head");
+  head.append(el("h1", "", h.title), el("p", "town", `${h.town} · ${specs(h)}`));
+
+  const about = el("div", "about");
+  if (h.description) about.append(el("p", "", h.description));
+  if (h.amenities.length) {
+    const chips = el("ul", "chips");
+    for (const a of h.amenities) chips.append(el("li", "", amenityName(a)));
+    if (h.petsAllowed === true) chips.append(el("li", "", "Pets welcome"));
+    about.append(el("h2", "", "What's here"), chips);
+  }
+
+  const table = el("table", "prices");
+  const caption = el("caption", "", `Average price per night${h.feesCents ? `, plus ${money(h.feesCents)} cleaning & fees per stay` : ""}`);
+  const thead = el("thead");
+  const hr = el("tr");
+  for (const t of ["Month", "On Airbnb", "On Market Scope", "You save"]) hr.append(el("th", "", t));
+  thead.append(hr);
+  const tbody = el("tbody");
+  for (const m of h.months) {
+    const tr = el("tr");
+    tr.append(el("th", "", m.month));
+    tr.append(el("td", "was-cell", m.airbnbNightlyCents ? dollars(m.airbnbNightlyCents) : "—"));
+    tr.append(el("td", "now-cell", dollars(m.nightlyCents)));
+    tr.append(el("td", "", m.airbnbNightlyCents ? dollars(m.airbnbNightlyCents - m.nightlyCents) : "—"));
+    tbody.append(tr);
+  }
+  table.append(caption, thead, tbody);
+  const tableWrap = el("div", "table-wrap");
+  tableWrap.append(table);
+
+  const side = el("aside", "booking");
+  side.append(el("p", "label", "Starting at"), priceBlock(h));
+  const qf = el("form", "quote");
+  qf.setAttribute("aria-label", "Check your dates");
+  const field = (label, name, type, value) => {
+    const l = el("label", "", label);
+    const i = el("input");
+    i.type = type; i.name = name; i.required = true;
+    if (value) i.value = value;
+    if (type === "date") i.min = isoDate(new Date());
+    if (type === "number") { i.min = "1"; i.max = String(h.maxGuests); }
+    l.append(i);
+    return l;
+  };
+  qf.append(
+    field("Check-in", "checkIn", "date", form.checkIn.value),
+    field("Check-out", "checkOut", "date", form.checkOut.value),
+    field("Guests", "guests", "number", form.guests.value),
+    el("button", "", "Check price"),
+  );
+  const out = el("div", "quote-out");
+  out.setAttribute("role", "status");
+  qf.addEventListener("submit", (e) => { e.preventDefault(); quote(h, out, qf); });
+  const book = el("a", "book", "Book on the host's site");
+  book.href = h.bookingUrl;
+  book.target = "_blank";
+  book.rel = "noopener noreferrer";
+  side.append(qf, out, book, el("p", "muted small", "You book and pay on the host's own site. Taxes may apply."));
+
+  const layout = el("div", "detail");
+  const main = el("div", "detail-main");
+  main.append(head, about, el("h2", "", "Prices by month"), tableWrap);
+  layout.append(main, side);
+  detailView.replaceChildren(back, hero, layout);
+  if (qf.checkIn.value && qf.checkOut.value) quote(h, out, qf);
+}
+
+// ---------- routing & setup ----------
+function route() {
+  const m = /^#\/home\/(.+)$/.exec(location.hash);
+  if (m) return showDetail(decodeURIComponent(m[1]));
+  detailView.hidden = true;
+  listView.hidden = false;
+  if (!loadedOnce && form.market.value) run(false);
+}
+
 async function init() {
   form.checkIn.min = form.checkOut.min = isoDate(new Date());
-  form.checkIn.value = plusDays(14);
-  form.checkOut.value = plusDays(17);
   form.checkIn.addEventListener("change", () => {
     form.checkOut.min = form.checkIn.value;
-    if (form.checkOut.value <= form.checkIn.value) {
-      const d = new Date(`${form.checkIn.value}T12:00`); d.setDate(d.getDate() + 2); form.checkOut.value = isoDate(d);
-    }
+    if (form.checkOut.value && form.checkOut.value <= form.checkIn.value) form.checkOut.value = "";
   });
   form.addEventListener("submit", (e) => { e.preventDefault(); run(false); });
+  form.market.addEventListener("change", () => run(false));
+  clearDates.addEventListener("click", () => { form.checkIn.value = form.checkOut.value = ""; run(false); });
   more.addEventListener("click", () => run(true));
+  window.addEventListener("hashchange", route);
 
   try {
-    const { markets } = await (await fetch("/api/markets")).json();
-    for (const m of markets) form.market.append(new Option(m.name, m.id));
-    if (markets.length) run(false);
-    else statusEl.textContent = "No areas yet. Add data files to the inbox folder and refresh.";
+    const body = await (await fetch("/api/markets")).json();
+    discountPct = body.discountPct ?? discountPct;
+    $("#discount").textContent = `${discountPct}%`;
+    for (const m of body.markets) form.market.append(new Option(m.name, m.id));
+    if (!body.markets.length) statusEl.textContent = "No homes yet. Add data files to the inbox folder and refresh.";
   } catch {
     statusEl.textContent = "Couldn't reach Market Scope. Is the app running?";
   }
+  route();
 }
 init();

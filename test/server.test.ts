@@ -144,7 +144,7 @@ test("inbox: good files imported, bad file rejected with a readable reason", () 
   const errors = readdirSync(dirs.failed).find((f: string) => f.endsWith(".errors.txt"))!;
   assert.match(readFileSync(join(dirs.failed, errors), "utf8"), /Nothing from c-broken\.csv was imported/);
   const s = status((globalThis as any).__db);
-  assert.equal(s.offers, 10);
+  assert.equal(s.offers, 40); // 10 hand-made + 30 generated fictional homes
   assert.deepEqual(s.recentImports.map((r: any) => r.status), ["duplicate", "failed", "imported", "imported"]);
 });
 
@@ -155,9 +155,10 @@ test("api: markets list with display names", async () => {
 });
 
 test("api: traveler search ranks deals and never leaks internal reasons", async () => {
-  const { code, body } = await get(`/api/search?market=fake-pine-lake&${dates}&guests=2`);
+  const { code, body } = await get(`/api/search?market=fake-pine-lake&${dates}&guests=2&pageSize=50`);
   assert.equal(code, 200);
   assert.equal(body.excluded, undefined);
+  assert.equal(body.results[0].title, "Hemlock Hollow Cabin"); // listing details ride along with each result
   assert.equal(body.marketName, "Pine Lake");
   const ids = body.results.map((r: any) => r.listingId);
   assert.equal(ids[0], "PL-101"); // priced 30% under typical
@@ -170,9 +171,11 @@ test("api: traveler search ranks deals and never leaks internal reasons", async 
   assert.equal(body.results.at(-1).tier, "no_score");
   assert.equal(body.results[0].bedrooms, 3);
 
-  const fees = await get(`/api/search?market=fake-ridge-valley&${dates}&guests=2&pets=true`);
-  assert.deepEqual(fees.body.results.map((r: any) => r.listingId), ["RV-201"]); // RV-203 pets unknown, RV-202 no
-  assert.equal(fees.body.results[0].baselineMeta.priceBasis, "nightly_incl_mandatory_fees");
+  const pets = await get(`/api/search?market=fake-ridge-valley&${dates}&guests=2&pets=true&pageSize=50`);
+  const petIds = pets.body.results.map((r: any) => r.listingId);
+  assert.ok(petIds.includes("RV-201"));
+  assert.ok(!petIds.includes("RV-202") && !petIds.includes("RV-203")); // pets: no, and unknown
+  assert.equal(pets.body.results[0].baselineMeta.priceBasis, "nightly_incl_mandatory_fees");
 });
 
 test("api: paging and filters", async () => {
@@ -211,30 +214,64 @@ test("traveler page is served with a strict content policy", async () => {
   assert.equal((await fetch(`${base}/../package.json`)).status, 404);
 });
 
-test("offers priced on Airbnb are listed at the 8% equivalent; Airbnb links are refused", () => {
-  const header = [...OFFER_COLUMNS, "prices_from"];
-  const parsed = parseImport(toCsv([header, [...offerRow(), "airbnb"]]), "2026-11-09T12:00:00Z");
+test("offers priced on Airbnb are listed 7% lower; Airbnb links are refused", () => {
+  const header = [...OFFER_COLUMNS, "prices_from", "title", "town", "description", "bathrooms"];
+  const parsed = parseImport(toCsv([header, [...offerRow(), "airbnb", "Test Cabin", "Pine Lake", "Cozy.", "1.5"]]), "2026-11-09T12:00:00Z");
   if (parsed.kind !== "offers") throw new Error("expected offers");
   const o = parsed.offers[0]!;
-  assert.equal(o.nightlyRatesCents["2027-03-10"], 13_859); // $150 × 85/92 = $138.587; host still nets $127.50
-  assert.equal(o.mandatoryFeesCents, 11_087); // $120 × 85/92 = $110.870
+  assert.equal(o.nightlyRatesCents["2027-03-10"], 13_950); // $150 − 7%
+  assert.equal(o.mandatoryFeesCents, 11_160); // $120 − 7%
+  assert.deepEqual(o.details, { title: "Test Cabin", town: "Pine Lake", description: "Cozy.", bathrooms: 1.5 });
+  assert.match(problemsOf(() => parseImport(toCsv([header, [...offerRow(), "", "T", "", "", "2.3"]]), "x"))[0]!, /bathrooms/);
   assert.equal(o.airbnbPrice!.nightlyRatesCents["2027-03-10"], 15_000);
   assert.equal(o.airbnbPrice!.mandatoryFeesCents, 12_000);
 
   const onAirbnb = (pricesFrom: string) =>
-    problemsOf(() => parseImport(toCsv([header, [...offerRow({ booking_url: "https://www.airbnb.com/rooms/123" }), pricesFrom]]), "x"));
+    problemsOf(() => parseImport(toCsv([header, [...offerRow({ booking_url: "https://www.airbnb.com/rooms/123" }), pricesFrom, "", "", "", ""]]), "x"));
   assert.match(onAirbnb("airbnb")[0]!, /direct booking page/);
   assert.deepEqual(onAirbnb("direct"), []); // prices used as given may link anywhere
   assert.deepEqual(onAirbnb(""), []);
   assert.match(onAirbnb("vrbo")[0]!, /prices_from must be airbnb, direct, or blank/);
 });
 
-test("api: Airbnb-priced listings show the traveler's saving; direct-priced ones don't", async () => {
+test("api: dated results show the traveler's saving against Airbnb", async () => {
   const { body } = await get(`/api/search?market=fake-pine-lake&${dates}&guests=2`);
   const top = body.results[0];
   const saved = top.airbnbTotalCents - top.offerTotalCents;
   assert.ok(saved > 0);
   assert.ok(top.reasons.includes(`$${(saved / 100).toFixed(2)} less than this home's Airbnb price`), top.reasons.join(" | "));
-  const ridge = await get(`/api/search?market=fake-ridge-valley&${dates}&guests=2`);
-  assert.ok(ridge.body.results.every((r: any) => r.airbnbTotalCents === null && !r.reasons.some((s: string) => /Airbnb/.test(s))));
+});
+
+test("api: browse every home in an area without dates, cheapest first", async () => {
+  const { code, body } = await get("/api/listings?market=fake-pine-lake");
+  assert.equal(code, 200);
+  assert.equal(body.total, 25); // 7 hand-made + 18 generated
+  assert.ok(body.listings.every((l: any) => l.listingId.startsWith("PL-")));
+  const prices = body.listings.map((l: any) => l.fromNightlyCents);
+  assert.deepEqual(prices, [...prices].sort((a: number, b: number) => a - b));
+  for (const l of body.listings) {
+    assert.ok(l.title && l.town && l.description.startsWith("Fictional sample home."));
+    // 7% less than the same night on Airbnb, rounded to the cent
+    assert.equal(l.fromNightlyCents, Math.round(l.fromAirbnbNightlyCents * 93 / 100));
+  }
+  const filtered = await get("/api/listings?market=fake-pine-lake&guests=9&bedroomsMin=4&pets=true");
+  assert.ok(filtered.body.listings.every((l: any) => l.maxGuests >= 9 && l.bedrooms >= 4 && l.petsAllowed === true));
+  assert.equal((await get("/api/listings")).code, 400);
+
+  const ridge = await get("/api/listings?market=fake-ridge-valley");
+  assert.equal(ridge.body.total, 14); // 3 hand-made + 12 generated, minus the one not opted in
+  assert.ok(!ridge.body.listings.some((l: any) => l.listingId === "RV-329"));
+});
+
+test("api: a home's page has details and 12 months of prices", async () => {
+  const { code, body } = await get("/api/listings/PL-101");
+  assert.equal(code, 200);
+  assert.equal(body.title, "Hemlock Hollow Cabin");
+  assert.equal(body.market, "fake-pine-lake");
+  assert.deepEqual(body.amenities, ["fireplace", "hot_tub", "wifi"]);
+  assert.equal(body.months.length, 12);
+  assert.equal(body.months[0].month, "Nov 2026");
+  for (const m of body.months) assert.ok(m.nightlyCents < m.airbnbNightlyCents);
+  assert.equal((await get("/api/listings/RV-329")).code, 404); // not opted in
+  assert.equal((await get("/api/listings/nope")).code, 404);
 });

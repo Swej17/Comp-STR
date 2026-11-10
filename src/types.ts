@@ -42,6 +42,8 @@ export type HostOffer = {
   expiresAt: string;
   /** Set when the host sent Airbnb prices that were converted to Market Scope prices: the originals, for the savings message. */
   airbnbPrice?: { nightlyRatesCents: Record<string, number>; mandatoryFeesCents: number };
+  /** Display details for travelers; the algorithm never reads these. */
+  details?: { title: string; town: string; description: string; bathrooms: number | null };
 };
 
 export type SearchQuery = {

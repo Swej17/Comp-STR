@@ -18,7 +18,7 @@ Needs [Node.js 24](https://nodejs.org/) or newer.
 
 ```bash
 npm install
-npm run sample-data   # optional: writes fake sample CSVs into data/inbox
+npm run sample-data   # optional: 40 fictional homes in two fake areas, written to data/inbox
 npm start             # http://localhost:3000
 ```
 
@@ -66,19 +66,23 @@ which kind of file it is from the columns:
 | `updated_at` | | optional; blank = time of import (offers go stale after 14 days) |
 | `expires_at` | `2027-01-31` | |
 | `prices_from` | `airbnb` | optional. `airbnb` = the rates and fees above are the host's Airbnb prices (see below). Blank or `direct` = use them as given |
+| `title`, `town`, `description` | `Hemlock Hollow Cabin` | optional, shown to travelers. Without a title the site says "3-bedroom home" |
+| `bathrooms` | `2.5` | optional; whole or half numbers |
 
-### Host fees: 8% instead of Airbnb's 15%
+### Pricing: 7% less than Airbnb
 
-Market Scope's host fee is **8%**; Airbnb's is **15%** (both in `hostFeePct` in `src/config.ts`).
-When a host sends their Airbnb prices (`prices_from` = `airbnb`), Market Scope lists the price that
-leaves the host **exactly the same take-home pay**:
+Hosts pay Market Scope a smaller fee (8%) than Airbnb (15%), so every listing sent with Airbnb prices
+(`prices_from` = `airbnb`) is shown **7% below its Airbnb price** (`airbnbDiscountPct` in `src/config.ts`).
+The host still comes out slightly ahead:
 
-> listed price = Airbnb price × (100 − 15) ÷ (100 − 8) = Airbnb price × 0.924
+| | Guest pays | Host fee | Host keeps |
+|---|---|---|---|
+| On Airbnb | $150.00 | 15% | $127.50 |
+| On Market Scope | $139.50 | 8% | $128.34 |
 
-So a $150 Airbnb night is listed at $138.59: the host keeps $127.50 either way, and the traveler
-pays about **7.6% less**. The nightly rates and cleaning/mandatory fees are each converted and rounded half-up to the cent.
-Travelers see a line like "$40.18 less than this home's Airbnb price", and the lower price also feeds into the
-deal scoring, so more stays qualify as good or great value.
+Nightly rates and cleaning/mandatory fees are each reduced by 7% and rounded half-up to the cent.
+Travelers see the Airbnb price struck through next to ours and a line like "$45.91 less than this
+home's Airbnb price". The lower price also feeds into deal scoring, so more stays qualify as good or great value.
 
 Because the traveler must actually be able to book at the lower price, a listing with
 `prices_from` = `airbnb` **must link to the host's direct booking page**. An airbnb.com link is
@@ -93,7 +97,9 @@ computer), `MARKET_SCOPE_DATA` (`./data`), `MARKET_SCOPE_TZ` (`America/New_York`
   `amenities=hot_tub,wifi`, `maxTotal` (dollars), `sort` (`best_deal` | `price_asc` | `price_desc`), `pageSize`, `cursor`.
   Returns `results` (each `DealResult` plus `bedrooms` and `maxGuests`), `nextCursor`, `totalEligible`, `marketName`.
   Exclusion reasons stay internal.
-- `GET /api/markets`: areas that have at least one host offer.
+- `GET /api/listings?market=` plus optional `guests`, `bedroomsMin`, `pets=true`, `sort=price_desc`: every listable home in the area, cheapest upcoming night first (no dates needed).
+- `GET /api/listings/<listingId>`: one home with its details and average nightly prices for the next 12 months, ours vs. Airbnb.
+- `GET /api/markets`: areas that have at least one host offer, plus the current discount percent.
 - `GET /api/status`: row counts and the last 20 imports with any problems.
 
 ## Develop

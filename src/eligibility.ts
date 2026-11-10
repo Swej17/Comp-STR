@@ -10,14 +10,21 @@ const isCents = (v: unknown): v is number => Number.isSafeInteger(v) && (v as nu
  * Every rule must pass; returns the first failing reason. Unknown values (null, undefined,
  * unparseable) always fail. Comparisons are written as !(x ok) so NaN fails too.
  */
+/** Whether an offer may be shown at all (any dates): opted in, not expired, fresh. Null = listable. */
+export function unlistableReason(o: HostOffer, nowIso: string, cfg: Config = DEFAULT_CONFIG): string | null {
+  const now = Date.parse(nowIso);
+  if (!o.optedInAt || !(Date.parse(o.optedInAt) <= now)) return "not_opted_in";
+  if (!(Date.parse(o.expiresAt) > now)) return "expired";
+  if (!(now - Date.parse(o.updatedAt) <= cfg.maxOfferAgeDays * DAY_MS)) return "stale";
+  return null;
+}
+
 export function checkEligibility(o: HostOffer, q: SearchQuery, cfg: Config = DEFAULT_CONFIG): Eligibility {
   const fail = (reason: string): Eligibility => ({ ok: false, reason });
-  const now = Date.parse(q.now);
   const today = q.now.slice(0, 10);
 
-  if (!o.optedInAt || !(Date.parse(o.optedInAt) <= now)) return fail("not_opted_in");
-  if (!(Date.parse(o.expiresAt) > now)) return fail("expired");
-  if (!(now - Date.parse(o.updatedAt) <= cfg.maxOfferAgeDays * DAY_MS)) return fail("stale");
+  const unlistable = unlistableReason(o, q.now, cfg);
+  if (unlistable) return fail(unlistable);
   if (o.propertyClass.market !== q.market) return fail("wrong_market");
   if (o.propertyClass.propertyType !== "entire_home") return fail("unsupported_property_type");
   if (q.bedroomsMin !== undefined && !(o.propertyClass.bedrooms >= q.bedroomsMin)) return fail("too_few_bedrooms");
