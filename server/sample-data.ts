@@ -16,7 +16,7 @@ const monthStart = (date: string, plus: number) => {
   return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}-01`;
 };
 
-// price factor vs. the market's typical price: below 1 = a deal
+// price factor vs. the market's typical price (before any fee conversion): below 1 = a deal
 const LISTINGS = [
   { id: "PL-101", market: LAKE, bedrooms: 3, guests: 8, pets: "yes", yes: "hot_tub;wifi;fireplace", no: "", factor: 0.7, fees: 15_000 },
   { id: "PL-102", market: LAKE, bedrooms: 3, guests: 6, pets: "no", yes: "wifi", no: "hot_tub", factor: 0.84, fees: 12_000 },
@@ -40,7 +40,7 @@ export function sampleCsvs(today: string): { observations: string; offers: strin
   ]);
 
   const end = monthStart(today, 12);
-  const rows: (string | number)[][] = [[...OFFER_COLUMNS, "market_name"]];
+  const rows: (string | number)[][] = [[...OFFER_COLUMNS, "market_name", "prices_from"]];
   for (const l of LISTINGS) {
     const marketFactor = l.market === LAKE ? 1 : 0.85;
     for (let k = 0; k < 12; k++) {
@@ -51,6 +51,7 @@ export function sampleCsvs(today: string): { observations: string; offers: strin
         l.id, `host-${l.id}`, l.market, l.bedrooms, l.guests, l.pets, l.yes, l.no,
         today, end, from, monthStart(today, k + 1), usd(nightly), usd(l.fees),
         2, 21, `https://example.com/book/${l.id}`, today, addDays(today, 60), NAMES[l.market]!,
+        l.market === LAKE ? "airbnb" : "direct", // Pine Lake hosts send Airbnb prices; Ridge Valley hosts send direct prices
       ]);
     }
   }

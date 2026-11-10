@@ -65,6 +65,24 @@ which kind of file it is from the columns:
 | `opted_in_at` | `2026-10-01` | **blank = not opted in, never shown**. To remove a listing, re-send it blank |
 | `updated_at` | | optional; blank = time of import (offers go stale after 14 days) |
 | `expires_at` | `2027-01-31` | |
+| `prices_from` | `airbnb` | optional. `airbnb` = the rates and fees above are the host's Airbnb prices (see below). Blank or `direct` = use them as given |
+
+### Host fees: 8% instead of Airbnb's 15%
+
+Market Scope's host fee is **8%**; Airbnb's is **15%** (both in `hostFeePct` in `src/config.ts`).
+When a host sends their Airbnb prices (`prices_from` = `airbnb`), Market Scope lists the price that
+leaves the host **exactly the same take-home pay**:
+
+> listed price = Airbnb price × (100 − 15) ÷ (100 − 8) = Airbnb price × 0.924
+
+So a $150 Airbnb night is listed at $138.59: the host keeps $127.50 either way, and the traveler
+pays about **7.6% less**. The nightly rates and cleaning/mandatory fees are each converted and rounded half-up to the cent.
+Travelers see a line like "$40.18 less than this home's Airbnb price", and the lower price also feeds into the
+deal scoring, so more stays qualify as good or great value.
+
+Because the traveler must actually be able to book at the lower price, a listing with
+`prices_from` = `airbnb` **must link to the host's direct booking page**. An airbnb.com link is
+rejected, since a guest following it would pay the Airbnb price.
 
 Settings (environment variables): `PORT` (3000), `HOST` (127.0.0.1, so it's only reachable from this
 computer), `MARKET_SCOPE_DATA` (`./data`), `MARKET_SCOPE_TZ` (`America/New_York`, the "today" for check-in rules).

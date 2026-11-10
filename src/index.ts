@@ -1,5 +1,5 @@
 export * from "./types.ts";
-export { ALGORITHM_VERSION, DEFAULT_CONFIG, type Config } from "./config.ts";
+export { ALGORITHM_VERSION, DEFAULT_CONFIG, fromAirbnbPrice, type Config } from "./config.ts";
 export { buildBaselines, baselineKey, peakKey } from "./baselines.ts";
 export { checkEligibility, type Eligibility } from "./eligibility.ts";
 export { scoreStay } from "./score.ts";

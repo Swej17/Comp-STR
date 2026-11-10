@@ -1,5 +1,6 @@
 // Turns a dropped CSV file into validated observations or host offers. All-or-nothing:
 // any bad row rejects the whole file with a readable list of problems.
+import { fromAirbnbPrice } from "../src/config.ts";
 import { isDate, stayNights } from "../src/dates.ts";
 import type { BaselineObservation, Confidence, HostOffer, PriceBasis } from "../src/types.ts";
 import { parseCsv } from "./csv.ts";
@@ -24,7 +25,10 @@ export const OFFER_COLUMNS = [
 ];
 // Optional in both: market_name, property_type. Optional for offers: updated_at (blank = time of import).
 const RATE_COLUMNS = ["rate_from", "rate_to", "nightly_rate_usd"];
-const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at"];
+const LISTING_COLUMNS = [...OFFER_COLUMNS.filter((c) => !RATE_COLUMNS.includes(c)), "market_name", "property_type", "updated_at", "prices_from"];
+// prices_from (optional): "airbnb" = the rates and fees are the host's Airbnb prices; we list the
+// lower price that nets the host the same at our fee. Blank or "direct" = use the prices as given.
+const isAirbnbLink = (url: string) => /(^|\.)airbnb\.[a-z.]+$/i.test(new URL(url).hostname);
 
 /** "$1,299.50" → 129950. Parsed as text, so a float never touches money. */
 export function dollarsToCents(s: string): number | undefined {
@@ -108,7 +112,7 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
   }
 
   // Offers: one row per rate period; a listing may span several rows with identical listing details.
-  const listings = new Map<string, { offer: HostOffer; signature: string }>();
+  const listings = new Map<string, { offer: HostOffer; signature: string; fromAirbnb: boolean }>();
   for (const rec of records) {
     const id = need(rec, "listing_id", text, "is required");
     if (id === undefined) continue;
@@ -144,7 +148,11 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
         updatedAt: rec.get("updated_at") === "" ? importedAt : need(rec, "updated_at", instant, "must be a date"),
         expiresAt: need(rec, "expires_at", instant, "must be a date"),
       };
-      entry = { offer, signature };
+      const fromAirbnb = need(rec, "prices_from", (s) => (s === "airbnb" ? true : s === "" || s === "direct" ? false : undefined), "must be airbnb, direct, or blank") === true;
+      if (fromAirbnb && offer.bookingUrl && isAirbnbLink(offer.bookingUrl)) {
+        problems.push(`Row ${rec.row}: booking_url must be the host's direct booking page when prices_from is airbnb (on Airbnb, guests would pay the Airbnb price)`);
+      }
+      entry = { offer, signature, fromAirbnb };
       listings.set(id, entry);
     } else if (entry.signature !== signature) {
       problems.push(`Row ${rec.row}: listing ${id} details differ from its earlier row (only ${RATE_COLUMNS.join(", ")} may change between rows)`);
@@ -162,5 +170,11 @@ export function parseImport(csvText: string, importedAt: string): Parsed {
     for (const d of nights) rates[d] = rate;
   }
   if (problems.length) throw new ImportError(problems);
+  for (const { offer: o, fromAirbnb } of listings.values()) {
+    if (!fromAirbnb) continue;
+    o.airbnbPrice = { nightlyRatesCents: o.nightlyRatesCents, mandatoryFeesCents: o.mandatoryFeesCents };
+    o.nightlyRatesCents = Object.fromEntries(Object.entries(o.nightlyRatesCents).map(([d, c]) => [d, fromAirbnbPrice(c)]));
+    o.mandatoryFeesCents = fromAirbnbPrice(o.mandatoryFeesCents);
+  }
   return { kind, offers: [...listings.values()].map((e) => e.offer), marketNames };
 }

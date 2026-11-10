@@ -24,7 +24,7 @@ test("best_deal: deals first, needs_review and unscored after, by total", () => 
   const res = run(MIX);
   assert.deepEqual(res.results.map((r) => r.listingId), ["A-great", "B-good", "D-above", "C-unscored", "E-review"]);
   assert.deepEqual(res.results.map((r) => r.tier), ["great", "good", "none", "no_score", "needs_review"]);
-  assert.equal(res.configVersion, "2026-11-09.1");
+  assert.equal(res.configVersion, "2026-11-10.1");
   assert.ok(res.results.every((r) => r.configVersion === res.configVersion && r.algorithmVersion === res.algorithmVersion));
 });
 

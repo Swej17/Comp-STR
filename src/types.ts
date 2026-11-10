@@ -40,6 +40,8 @@ export type HostOffer = {
   optedInAt: string | null;
   updatedAt: string;
   expiresAt: string;
+  /** Set when the host sent Airbnb prices that were converted to Market Scope prices: the originals, for the savings message. */
+  airbnbPrice?: { nightlyRatesCents: Record<string, number>; mandatoryFeesCents: number };
 };
 
 export type SearchQuery = {
@@ -83,6 +85,7 @@ export type DealResult = {
   nights: number;
   offerTotalCents: number; // nightly rates + mandatory fees, before taxes
   feesCents: number;
+  airbnbTotalCents: number | null; // the same stay at the host's Airbnb price, when known
   baselineTotalCents: number | null;
   dealPct: number | null; // ratio, e.g. 0.32; null for no_score and needs_review
   tier: Tier;

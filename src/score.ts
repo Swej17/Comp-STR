@@ -21,9 +21,16 @@ export function scoreStay(
   const nightlyCents = nights.reduce((s, d) => s + offer.nightlyRatesCents[d]!, 0);
   const feesCents = offer.mandatoryFeesCents;
   const offerTotalCents = nightlyCents + feesCents;
+  const air = offer.airbnbPrice;
+  const airbnbTotalCents = air && nights.every((d) => Number.isSafeInteger(air.nightlyRatesCents[d]))
+    ? nights.reduce((s, d) => s + air.nightlyRatesCents[d]!, 0) + air.mandatoryFeesCents
+    : null;
+  const savings = airbnbTotalCents !== null && airbnbTotalCents > offerTotalCents
+    ? [`${dollars(airbnbTotalCents - offerTotalCents)} less than this home's Airbnb price`]
+    : [];
   const base = {
     listingId: offer.listingId, bookingUrl: offer.bookingUrl, currency: offer.currency,
-    nights: nights.length, offerTotalCents, feesCents,
+    nights: nights.length, offerTotalCents, feesCents, airbnbTotalCents,
     algorithmVersion: ALGORITHM_VERSION, configVersion: cfg.version,
   };
 
@@ -37,7 +44,7 @@ export function scoreStay(
   if (!basis) {
     return {
       ...base, baselineTotalCents: null, dealPct: null, tier: "no_score", offSeasonPct: null,
-      confidence: null, reasons: [NO_DATA, TAXES], baselineMeta: null,
+      confidence: null, reasons: [...savings, NO_DATA, TAXES], baselineMeta: null,
     };
   }
 
@@ -71,6 +78,7 @@ export function scoreStay(
     const above = Math.round(-diff100 / baselineTotalCents);
     reasons.push(above >= 1 ? `${above}% above ${typical}` : `About in line with ${typical}`);
   }
+  reasons.push(...savings);
   if (tier !== "needs_review" && offSeasonPct !== null && peak && !months.includes(peak.month)) {
     const pct = Math.floor(offSeasonPct * 100 + 1e-9);
     if (pct >= cfg.minOffSeasonPctToMention) {

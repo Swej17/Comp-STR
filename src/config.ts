@@ -24,10 +24,15 @@ export type Config = {
   /** Hard cap on stay length; longer searches are rejected (open question: monthly stays). */
   readonly maxStayNights: number;
   readonly pageSize: { readonly default: number; readonly max: number };
+  /**
+   * Host fees as whole percents. A host who sends their Airbnb price is listed at the price that
+   * nets them the same: price × (100 − airbnb) ÷ (100 − marketScope).
+   */
+  readonly hostFeePct: { readonly marketScope: number; readonly airbnb: number };
 };
 
 export const DEFAULT_CONFIG: Config = Object.freeze({
-  version: "2026-11-09.1",
+  version: "2026-11-10.1",
   minSampleSize: 20,
   sampleConfidence: { high: 50, medium: 30 },
   maxBaselineAgeDays: 400,
@@ -39,4 +44,9 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   maxOfferAgeDays: 14,
   maxStayNights: 90,
   pageSize: { default: 20, max: 50 },
+  hostFeePct: { marketScope: 8, airbnb: 15 },
 });
+
+/** The price that leaves the host the same take-home at Market Scope's fee as at Airbnb's. Half-up to whole cents. */
+export const fromAirbnbPrice = (cents: number, cfg: Config = DEFAULT_CONFIG): number =>
+  Math.round((cents * (100 - cfg.hostFeePct.airbnb)) / (100 - cfg.hostFeePct.marketScope));

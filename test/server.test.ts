@@ -210,3 +210,31 @@ test("traveler page is served with a strict content policy", async () => {
   assert.equal((await fetch(`${base}/app.js`)).status, 200);
   assert.equal((await fetch(`${base}/../package.json`)).status, 404);
 });
+
+test("offers priced on Airbnb are listed at the 8% equivalent; Airbnb links are refused", () => {
+  const header = [...OFFER_COLUMNS, "prices_from"];
+  const parsed = parseImport(toCsv([header, [...offerRow(), "airbnb"]]), "2026-11-09T12:00:00Z");
+  if (parsed.kind !== "offers") throw new Error("expected offers");
+  const o = parsed.offers[0]!;
+  assert.equal(o.nightlyRatesCents["2027-03-10"], 13_859); // $150 × 85/92 = $138.587; host still nets $127.50
+  assert.equal(o.mandatoryFeesCents, 11_087); // $120 × 85/92 = $110.870
+  assert.equal(o.airbnbPrice!.nightlyRatesCents["2027-03-10"], 15_000);
+  assert.equal(o.airbnbPrice!.mandatoryFeesCents, 12_000);
+
+  const onAirbnb = (pricesFrom: string) =>
+    problemsOf(() => parseImport(toCsv([header, [...offerRow({ booking_url: "https://www.airbnb.com/rooms/123" }), pricesFrom]]), "x"));
+  assert.match(onAirbnb("airbnb")[0]!, /direct booking page/);
+  assert.deepEqual(onAirbnb("direct"), []); // prices used as given may link anywhere
+  assert.deepEqual(onAirbnb(""), []);
+  assert.match(onAirbnb("vrbo")[0]!, /prices_from must be airbnb, direct, or blank/);
+});
+
+test("api: Airbnb-priced listings show the traveler's saving; direct-priced ones don't", async () => {
+  const { body } = await get(`/api/search?market=fake-pine-lake&${dates}&guests=2`);
+  const top = body.results[0];
+  const saved = top.airbnbTotalCents - top.offerTotalCents;
+  assert.ok(saved > 0);
+  assert.ok(top.reasons.includes(`$${(saved / 100).toFixed(2)} less than this home's Airbnb price`), top.reasons.join(" | "));
+  const ridge = await get(`/api/search?market=fake-ridge-valley&${dates}&guests=2`);
+  assert.ok(ridge.body.results.every((r: any) => r.airbnbTotalCents === null && !r.reasons.some((s: string) => /Airbnb/.test(s))));
+});
