@@ -1,0 +1,47 @@
+
+> market-scope@1.0.0 test
+> node --test "test/*.test.ts"
+
+✔ baseline is the median after dropping IQR outliers (3.6468ms)
+✔ below minimum sample falls back to pooled bedrooms ±1, one confidence step lower (0.98ms)
+✔ baseline is unavailable when the fallback is still too small (0.4637ms)
+✔ never falls back across markets or price bases (6.5649ms)
+✔ confidence is the lowest of observations, sample size and data age (3.3282ms)
+✔ invalid observations are dropped, never treated as zero (0.7424ms)
+✔ peak month is the highest available monthly baseline (synthetic July) (34.1978ms)
+✔ baseline offer and query are eligible (6.0459ms)
+✔ unknowns: null is never a pass and missing is never zero (18.1337ms)
+✔ each eligibility rule excludes the offer with its reason (26.3329ms)
+✔ multi-month stay: March nights use March baseline, April nights use April (7.0983ms)
+✔ night counts are calendar dates, unaffected by DST changes (0.4241ms)
+✔ money: integer cents, rounded once (half-up) on the baseline total (3.0141ms)
+✔ fees on each price basis (25.412ms)
+✔ price basis: mismatched bases give no_score, never a comparison (6.3009ms)
+✔ tiers: exact boundaries at 15%, 25%, 60%; above typical is never a deal (16.6918ms)
+✔ synthetic market: reason wording and seasonal context (28.5812ms)
+✔ best_deal: deals first, needs_review and unscored after, by total (29.9229ms)
+✔ explicit price sorts override deal ranking completely (0.6359ms)
+✔ ties are deterministic: confidence (high first), then listingId (6.8223ms)
+✔ pagination: walking every page returns each eligible result exactly once (67.9525ms)
+✔ duplicate listing ids collapse to the most recently updated record (2.0359ms)
+✔ synthetic hosts: opted-out host never appears, reasons are traveler-ready (21.8513ms)
+✔ purity: never reads the clock and returns identical output for identical input (26.9722ms)
+✔ csv: quotes, escaped quotes, commas and newlines in fields, CRLF, BOM (6.8389ms)
+✔ dollars parse to exact cents as text (0.158ms)
+✔ offers file: rows merge per listing, blanks stay unknown (0.4386ms)
+✔ offers file: bad rows reject the whole file with row-level reasons (0.734ms)
+✔ localIso gives the property-local date and offset (0.5537ms)
+✔ inbox: good files imported, bad file rejected with a readable reason (2.0119ms)
+✔ api: markets list with display names (19.4008ms)
+✔ api: traveler search ranks deals and never leaks internal reasons (11.0526ms)
+✔ api: paging and filters (8.6381ms)
+✔ api: bad requests get a clear 400, unknown paths 404 (14.9958ms)
+✔ traveler page is served with a strict content policy (3.2524ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 540.7005

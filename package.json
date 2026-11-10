@@ -1,0 +1,20 @@
+{
+  "name": "market-scope",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Market Scope deal algorithm: seasonal baselines, deal scoring, eligibility, ranking. Pure module.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node server/main.ts",
+    "sample-data": "node server/sample-data.ts",
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
